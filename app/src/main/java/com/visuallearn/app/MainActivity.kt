@@ -16,6 +16,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.visuallearn.app.ui.ChatScreen
 import com.visuallearn.app.ui.EnvironmentScreen
+import com.visuallearn.app.ui.ExploreScreen
+import com.visuallearn.app.ui.GalleryFigureScreen
 import com.visuallearn.app.ui.FigureScreen
 import com.visuallearn.app.ui.FiguresScreen
 import com.visuallearn.app.ui.SettingsScreen
@@ -76,6 +78,8 @@ private sealed interface Screen {
     data object Figures : Screen
     data object Settings : Screen
     data object Environment : Screen
+    data object Explore : Screen
+    data class GalleryFigure(val key: String) : Screen
 }
 
 private fun Screen.encode(): String = when (this) {
@@ -84,6 +88,8 @@ private fun Screen.encode(): String = when (this) {
     Screen.Figures -> "figures"
     Screen.Settings -> "settings"
     Screen.Environment -> "environment"
+    Screen.Explore -> "explore"
+    is Screen.GalleryFigure -> "gallery:$key"
 }
 
 private fun decode(s: String): Screen = when {
@@ -91,6 +97,8 @@ private fun decode(s: String): Screen = when {
     s == "figures" -> Screen.Figures
     s == "settings" -> Screen.Settings
     s == "environment" -> Screen.Environment
+    s == "explore" -> Screen.Explore
+    s.startsWith("gallery:") -> Screen.GalleryFigure(s.removePrefix("gallery:"))
     else -> Screen.Chat
 }
 
@@ -127,7 +135,7 @@ private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<Stri
             hasApiKey = settingsState.hasApiKey,
             onOpenFigure = { push(Screen.Figure(it)) },
             onOpenSettings = { push(Screen.Settings) },
-            onOpenExplore = null,
+            onOpenExplore = { push(Screen.Explore) },
             onOpenFigures = { push(Screen.Figures) },
         )
         is Screen.Figure -> FigureScreen(app.figureJobs, screen.jobId, darkFigures, onBack = ::pop)
@@ -138,5 +146,9 @@ private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<Stri
             onOpenEnvironment = { push(Screen.Environment) },
         )
         Screen.Environment -> EnvironmentScreen(app.envController, onBack = ::pop)
+        Screen.Explore -> ExploreScreen(app.gallery, onOpen = { push(Screen.GalleryFigure(it.key)) }, onBack = ::pop)
+        is Screen.GalleryFigure -> app.gallery.find(screen.key)
+            ?.let { GalleryFigureScreen(app.gallery, it, onBack = ::pop) }
+            ?: ExploreScreen(app.gallery, onOpen = { push(Screen.GalleryFigure(it.key)) }, onBack = ::pop)
     }
 }

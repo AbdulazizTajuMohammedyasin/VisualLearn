@@ -3,6 +3,7 @@ package com.visuallearn.app
 import android.app.Application
 import com.visuallearn.app.chat.ChatController
 import com.visuallearn.app.chat.ChatStore
+import com.visuallearn.app.gallery.Gallery
 import com.visuallearn.app.jobs.FigureJobs
 import com.visuallearn.app.linux.EnvController
 import com.visuallearn.app.settings.Settings
@@ -18,6 +19,8 @@ class VisualLearnApp : Application() {
         private set
     lateinit var chat: ChatController
         private set
+    lateinit var gallery: Gallery
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -26,5 +29,6 @@ class VisualLearnApp : Application() {
         figureJobs = FigureJobs(this, envController, settings)
         chatStore = ChatStore(this)
         chat = ChatController(chatStore, figureJobs, settings)
+        gallery = Gallery(this)
     }
 }
