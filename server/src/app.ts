@@ -1,8 +1,12 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import Fastify, { type FastifyInstance } from "fastify";
 import { authRoutes, publicUser, requireUser, type GoogleVerifier, type Mailer } from "./auth.ts";
 import { ChatEngine, chatRoutes } from "./chat.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
+import { documentRoutes, Documents } from "./documents.ts";
 import { ApiError } from "./errors.ts";
 import { figureRoutes, pageRoutes, type Figures } from "./figures.ts";
 import { syncRoutes } from "./sync.ts";
@@ -16,6 +20,7 @@ export function deleteUser(deps: Deps, userId: string) {
   // Stored pages are files; the rest goes with the user row through ON DELETE CASCADE.
   deps.figures?.deleteForUser(userId);
   deps.db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+  deps.documents?.sweep();
 }
 
 export interface Deps {
@@ -28,6 +33,8 @@ export interface Deps {
   models: ModelRegistry;
   /** Figure jobs; null runs chat without figures. */
   figures: Figures | null;
+  /** Attached PDFs; buildApp creates them under the data folder when not given. */
+  documents?: Documents;
   /** The model's instructions, including the OpenUI component library (ui-library/dist/system-prompt.md). */
   chatSystemPrompt: string;
   /** The OpenUI library version programs are written for. */
@@ -45,6 +52,11 @@ export interface FigureService {
 /** Builds the HTTP app. Every route lives under /v1 (section 2). */
 export async function buildApp(deps: Deps, options: { logger?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1_000_000 });
+  deps.documents ??= new Documents(
+    deps,
+    deps.config.dataDir === ":memory:" ? mkdtempSync(join(tmpdir(), "vl-docs-")) : join(deps.config.dataDir, "documents"),
+  );
+  const documents = deps.documents;
   const chat = new ChatEngine(deps);
   // The spec keeps finished replies' events for at least 10 minutes; a day is generous.
   const prune = setInterval(() => chat.pruneEvents(24 * 60 * 60 * 1000), 60 * 60 * 1000);
@@ -57,6 +69,12 @@ export async function buildApp(deps: Deps, options: { logger?: boolean; env?: No
       return reply.code(error.status).headers(error.headers).send(error.body());
     }
     const fastifyError = error as { statusCode?: number; validation?: unknown; message: string };
+    if (fastifyError.statusCode === 413) {
+      return reply.code(413).send(new ApiError(413, "too_large", "That file is too big. The limit is 25 MB.").body());
+    }
+    if (fastifyError.statusCode === 415) {
+      return reply.code(415).send(new ApiError(415, "unsupported_type", "Only PDF files can be attached.").body());
+    }
     if (fastifyError.validation || fastifyError.statusCode === 400) {
       return reply.code(400).send(new ApiError(400, "invalid_request", "The request wasn't valid.").body());
     }
@@ -92,7 +110,8 @@ export async function buildApp(deps: Deps, options: { logger?: boolean; env?: No
         authed.addHook("preHandler", async (request) => {
           limits.requests.hit(request.user.id);
           const url = request.routeOptions.url ?? "";
-          if (request.method === "POST" && (url === "/v1/figures" || url === "/v1/conversations/:id/messages")) limits.work.hit(request.user.id);
+          const work = ["/v1/figures", "/v1/conversations/:id/messages", "/v1/conversations/:id/documents"];
+          if (request.method === "POST" && work.includes(url)) limits.work.hit(request.user.id);
         });
 
         authed.get("/me", async (request) => ({ user: publicUser(request.user) }));
@@ -103,6 +122,7 @@ export async function buildApp(deps: Deps, options: { logger?: boolean; env?: No
         });
 
         chatRoutes(authed, deps, chat);
+        documentRoutes(authed, deps, documents);
         if (deps.figures) figureRoutes(authed, deps, deps.figures);
         syncRoutes(authed, deps, deps.figures);
         authed.register(async (admin) => adminRoutes(admin, deps, chat));

@@ -114,6 +114,18 @@ const MIGRATIONS: string[] = [
      status INTEGER NOT NULL,
      at INTEGER NOT NULL
    );`,
+  // 5: PDFs attached to chats
+  `CREATE TABLE documents (
+     id TEXT PRIMARY KEY,
+     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+     name TEXT NOT NULL,
+     bytes INTEGER NOT NULL,
+     pages INTEGER NOT NULL,
+     text TEXT NOT NULL,
+     created_at INTEGER NOT NULL
+   );
+   CREATE INDEX documents_by_conversation ON documents (conversation_id);`,
 ];
 
 /** Opens (or creates) the database and brings its schema up to date. */

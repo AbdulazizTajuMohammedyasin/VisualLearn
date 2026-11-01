@@ -27,6 +27,10 @@ export interface Routing {
 }
 
 export const SUPPORTED_NPM = ["@ai-sdk/anthropic", "@ai-sdk/openai", "@ai-sdk/google", "@ai-sdk/openai-compatible"] as const;
+/** Providers whose models take a PDF file directly (text, scans and diagrams); others get its text. */
+const READS_PDF = new Set(["@ai-sdk/anthropic", "@ai-sdk/openai", "@ai-sdk/google"]);
+/** Figures take a worker for up to an hour each; one reply may start this many. */
+export const MAX_FIGURES_PER_REPLY = 2;
 
 /** Until an admin sets routing, everything uses the built-in canned model. */
 const DEFAULT_ROUTING: Routing = {
@@ -71,6 +75,12 @@ export class ModelRegistry {
 
   saveRouting(routing: Routing) {
     this.db.prepare("INSERT INTO routing (id, json) VALUES (1, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json").run(JSON.stringify(routing));
+  }
+
+  /** Whether [modelId] can be sent PDF files as they are. */
+  readsPdf(modelId: string): boolean {
+    const p = this.provider(modelId.slice(0, modelId.indexOf("/")));
+    return !!p && READS_PDF.has(p.npm);
   }
 
   /** The AI SDK model for a `provider/model` id; null for the built-in dev model. */
@@ -118,7 +128,10 @@ export type ChatEvent = { type: "text"; text: string } | { type: "figure"; figur
 
 export interface ChatTurn {
   system: string;
+  /** The conversation, attached PDFs given as their text. */
   messages: ModelMessage[];
+  /** The same with PDFs attached as files, for models that read them. */
+  nativeMessages?: () => ModelMessage[];
   /** Starts a figure job for the model's create_figure tool; null when figures are unavailable. */
   startFigure: ((prompt: string) => string) | null;
   /** The user pressed the Figure button: start a figure for their request. */
@@ -158,10 +171,11 @@ async function* runOne(registry: ModelRegistry, modelId: string, turn: ChatTurn)
     yield { type: "figure", figureId: turn.startFigure(typeof last?.content === "string" ? last.content : "") };
   }
   const figureEvents: ChatEvent[] = [];
+  let figures = 0;
   const result = streamText({
     model,
     system: turn.system,
-    messages: turn.messages,
+    messages: turn.nativeMessages && registry.readsPdf(modelId) ? turn.nativeMessages() : turn.messages,
     abortSignal: turn.signal,
     stopWhen: isStepCount(3),
     // Errors arrive as "error" stream parts and are handled below (fallback or a failed message).
@@ -174,6 +188,10 @@ async function* runOne(registry: ModelRegistry, modelId: string, turn: ChatTurn)
                 "Start building an interactive figure (an Anatomy machine the learner can operate) for an idea that is easier to understand by seeing it work. Takes 10-60 minutes; the app shows progress and notifies the learner.",
               inputSchema: z.object({ prompt: z.string().describe("What the figure should show, in one or two sentences") }),
               execute: async ({ prompt }) => {
+                if (figures >= MAX_FIGURES_PER_REPLY) {
+                  return { error: `Only ${MAX_FIGURES_PER_REPLY} figures can be started in one reply. Offer the others as suggestions instead.` };
+                }
+                figures++;
                 const figureId = turn.startFigure!(prompt);
                 figureEvents.push({ type: "figure", figureId });
                 return { figureId, status: "queued" };
@@ -217,13 +235,33 @@ s3 = Step("Teeth seat", "At the narrow end each bump slips into the next tooth's
 tip = Callout("Pulling the slider the other way drives the wedge between the rows and unhooks them.", "tip")
 \`\`\``;
 
+/** A canned study pack for an attached PDF: what a real model is asked to produce, in miniature. */
+function devStudyPack(name: string, pages: number, excerpt: string) {
+  const firstLine = excerpt.split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith("---")) ?? name;
+  return [
+    `I read **${name}** (${pages} page${pages === 1 ? "" : "s"}). This is the development model, so the study pack below is a fixed example rather than one written from your file. It opens with: "${firstLine.slice(0, 120)}".`,
+    "**What it covers.** A real model would summarise each section here, then pick the best way to learn each part: steps for processes, flashcards for terms, a quiz to check understanding, and a 3D figure for anything that moves.",
+    "**The process, one step at a time.**",
+    STEPS,
+    "**Terms to remember.**",
+    FLASHCARDS,
+    "**Check yourself.**",
+    QUIZ,
+    "**Seeing it move.** The main mechanism is easier to understand in motion, so I'm building a figure of it; the card below shows its progress.",
+  ].join("\n\n");
+}
+
 /** Canned replies so the whole system runs without any model key (VL_DEV_AUTH style development). */
 async function* devModel(turn: ChatTurn): AsyncGenerator<ChatEvent> {
   const last = turn.messages.at(-1);
-  const text = (typeof last?.content === "string" ? last.content : "").toLowerCase();
-  const wantsFigure = turn.figureMode || ["show me", "figure", "visualize", "draw"].some((w) => text.includes(w));
+  const raw = typeof last?.content === "string" ? last.content : "";
+  const text = raw.toLowerCase();
+  const attached = /\[Attached PDF: (.+), (\d+) pages?\]\n<document>\n([\s\S]*?)<\/document>/.exec(raw);
+  const wantsFigure = turn.figureMode || !!attached || ["show me", "figure", "visualize", "draw"].some((w) => text.includes(w));
   let reply: string;
-  if (text.includes("[interactive action: review_mistakes]")) {
+  if (attached) {
+    reply = devStudyPack(attached[1], Number(attached[2]), attached[3]);
+  } else if (text.includes("[interactive action: review_mistakes]")) {
     reply = "Let's look at what tripped you up. Each wrong answer missed the same idea: the teeth lock because every bump sits in the next tooth's hollow, and the slider only guides them together.";
   } else if (wantsFigure && turn.startFigure) {
     reply = "Good one to see in motion. I'm building an interactive figure of it now; the card below shows its progress.";
@@ -241,5 +279,5 @@ async function* devModel(turn: ChatTurn): AsyncGenerator<ChatEvent> {
     await new Promise((r) => setTimeout(r, 15));
     yield { type: "text", text: word };
   }
-  if (wantsFigure && turn.startFigure) yield { type: "figure", figureId: turn.startFigure(text) };
+  if (wantsFigure && turn.startFigure) yield { type: "figure", figureId: turn.startFigure(attached ? `The main mechanism in ${attached[1]}` : text) };
 }

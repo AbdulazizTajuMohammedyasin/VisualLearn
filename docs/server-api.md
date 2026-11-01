@@ -98,6 +98,7 @@ A message is a list of parts so one reply can mix text, interactive UI and figur
 | `text` | `text` (Markdown) | Native Compose |
 | `ui` | `program` (OpenUI Lang), `libraryVersion` | The OpenUI WebView (section 8) |
 | `figure` | `figureId` | A figure card; opens the figure viewer |
+| `document` | `documentId`, `name`, `pages` | A PDF the learner attached (user messages only); shown as a chip |
 
 `status` is `streaming`, `complete` or `failed` (with `error`).
 
@@ -110,6 +111,7 @@ A message is a list of parts so one reply can mix text, interactive UI and figur
 | GET | `/conversations/{id}` | | `{ id, title, updatedAt, messages: [Message], nextCursor }` (newest last) |
 | PATCH | `/conversations/{id}` | `{ "title": "…" }` | conversation |
 | DELETE | `/conversations/{id}` | | 204 |
+| POST | `/conversations/{id}/documents?name=…` | the PDF itself, `Content-Type: application/pdf`, up to 25 MB | 201 `{ id, name, pages, bytes, hasText, createdAt }` |
 | POST | `/conversations/{id}/messages` | see below | `{ userMessage, assistantMessage }` with `assistantMessage.status = "streaming"` |
 | GET | `/messages/{id}/events` | | SSE stream (below) |
 | POST | `/messages/{id}/stop` | | 204; the reply ends with what it has |
@@ -117,11 +119,12 @@ A message is a list of parts so one reply can mix text, interactive UI and figur
 Sending a message:
 
 ```json
-{ "text": "How does a zipper work?", "mode": "auto", "uiAction": null }
+{ "text": "How does a zipper work?", "mode": "auto", "uiAction": null, "documentIds": [] }
 ```
 
 - `mode`: `auto` (the model decides whether to add UI or start a figure), or `figure` (the user pressed the Figure button: start a figure job for this request).
 - `uiAction`: set when an OpenUI component sends a follow-up (`@ToAssistant`), e.g. "Explain my wrong answers". Shape: `{ "sourceMessageId": "msg_…", "name": "review_mistakes", "context": { … component state … } }`. The server turns it into the next user turn; `text` can then be empty.
+- `documentIds`: up to three PDFs uploaded to this chat. `text` can be empty; the learner is then asking to learn the document. The model builds a study pack: an overview, then each topic in the format that fits it (explanation, step-by-step, flashcards, quiz) and up to two 3D figures for mechanisms or structures. Models that read PDFs (Anthropic, OpenAI, Google) get the file, including scanned pages and diagrams; others get its extracted text. The two most recent documents in a chat are given in full on every turn; older ones only by name.
 
 ### Reply stream (Server-Sent Events)
 

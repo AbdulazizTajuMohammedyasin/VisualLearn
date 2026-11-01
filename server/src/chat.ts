@@ -1,8 +1,9 @@
 import { EventEmitter } from "node:events";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import type { ModelMessage } from "ai";
+import type { ModelMessage, UserContent } from "ai";
 import type { Deps } from "./app.ts";
 import { transaction } from "./db.ts";
+import type { DocumentRow } from "./documents.ts";
 import { badRequest, notFound } from "./errors.ts";
 import { FenceSplitter } from "./fence.ts";
 import { runChat } from "./models.ts";
@@ -11,7 +12,15 @@ import { iso, newId } from "./util.ts";
 export type Part =
   | { type: "text"; text: string }
   | { type: "ui"; program: string; libraryVersion: string }
-  | { type: "figure"; figureId: string };
+  | { type: "figure"; figureId: string }
+  | { type: "document"; documentId: string; name: string; pages: number };
+
+/** Documents whose full content goes to the model; older ones are only named, to keep turns small. */
+const DOCUMENTS_IN_CONTEXT = 2;
+/** Above this, models that read PDFs get the extracted text instead (provider page limits). */
+const NATIVE_PDF_MAX_PAGES = 100;
+/** What a learner who attached a PDF without typing anything is asking for. */
+export const DEFAULT_DOCUMENT_ASK = "Help me learn what's in this document.";
 
 interface MessageRow {
   id: string;
@@ -146,7 +155,8 @@ export class ChatEngine {
         const routing = this.deps.models.routing();
         const turn = {
           system: this.deps.chatSystemPrompt,
-          messages: this.history(conversation.id, assistantId),
+          messages: this.history(conversation.id, assistantId, false),
+          nativeMessages: () => this.history(conversation.id, assistantId, true),
           figureMode: mode === "figure",
           startFigure: this.deps.figures ? (prompt: string) => this.deps.figures!.create(conversation.user_id, prompt, conversation.id) : null,
           signal: abort.signal,
@@ -205,24 +215,56 @@ export class ChatEngine {
     db.prepare("INSERT INTO message_events (message_id, seq, event, data_json) VALUES (?, ?, ?, ?)").run(messageId, next, event, JSON.stringify(data));
   }
 
-  /** The conversation so far in model form, up to (not including) [beforeId]. */
-  private history(conversationId: string, beforeId: string): ModelMessage[] {
+  /**
+   * The conversation so far in model form, up to (not including) [beforeId]. Attached PDFs
+   * go in as their text, or with [nativePdf] as the files themselves for models that read PDFs.
+   */
+  private history(conversationId: string, beforeId: string, nativePdf: boolean): ModelMessage[] {
     const rows = this.deps.db
       .prepare("SELECT * FROM messages WHERE conversation_id = ? AND id != ? ORDER BY created_at, rowid")
       .all(conversationId, beforeId) as unknown as (MessageRow & { ui_action_json: string | null })[];
+    const recent = rows.slice(-40);
+    const documentIds = recent.flatMap((m) => (JSON.parse(m.parts_json) as Part[]).flatMap((p) => (p.type === "document" ? [p.documentId] : [])));
+    const inContext = new Set(documentIds.slice(-DOCUMENTS_IN_CONTEXT));
     const out: ModelMessage[] = [];
-    for (const m of rows.slice(-40)) {
+    for (const m of recent) {
       const parts = JSON.parse(m.parts_json) as Part[];
       if (m.role === "user") {
-        let content = parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+        const documents = parts.filter((p) => p.type === "document");
+        let text = parts.map((p) => (p.type === "text" ? p.text : "")).join("");
+        if (!text.trim() && documents.length) text = DEFAULT_DOCUMENT_ASK;
         if (m.ui_action_json) {
           const action = JSON.parse(m.ui_action_json) as UiAction;
-          content += `\n\n[interactive action: ${action.name}]\n${JSON.stringify(action.context)}`;
+          text += `\n\n[interactive action: ${action.name}]\n${JSON.stringify(action.context)}`;
         }
-        out.push({ role: "user", content });
+        if (!documents.length) {
+          out.push({ role: "user", content: text });
+          continue;
+        }
+        const content: Exclude<UserContent, string> = [];
+        for (const d of documents) {
+          const row = this.deps.documents?.get(d.documentId);
+          const label = `[Attached PDF: ${d.name}, ${d.pages} page${d.pages === 1 ? "" : "s"}]`;
+          if (!row || !inContext.has(d.documentId)) {
+            content.push({ type: "text", text: `${label} (an earlier document, not included again; ask the learner to attach it again if you need it)` });
+            continue;
+          }
+          const file = nativePdf && row.pages <= NATIVE_PDF_MAX_PAGES ? this.deps.documents!.read(row.id) : null;
+          if (file) {
+            content.push({ type: "text", text: label });
+            content.push({ type: "file", data: file, mediaType: "application/pdf", filename: row.name });
+          } else {
+            content.push({ type: "text", text: `${label}\n<document>\n${documentText(row)}\n</document>` });
+          }
+        }
+        content.push({ type: "text", text });
+        // Text-only form for models (and the development model) that take a plain string.
+        out.push({ role: "user", content: nativePdf ? content : content.map((c) => (c.type === "text" ? c.text : "")).join("\n\n") });
       } else {
         const content = parts
-          .map((p) => (p.type === "text" ? p.text : p.type === "ui" ? `\`\`\`openui\n${p.program}\n\`\`\`` : `[figure ${p.figureId} started]`))
+          .map((p) =>
+            p.type === "text" ? p.text : p.type === "ui" ? `\`\`\`openui\n${p.program}\n\`\`\`` : p.type === "figure" ? `[figure ${p.figureId} started]` : "",
+          )
           .join("\n\n");
         if (content.trim()) out.push({ role: "assistant", content });
       }
@@ -283,11 +325,12 @@ export function chatRoutes(app: FastifyInstance, deps: Deps, engine: ChatEngine)
 
   app.post("/conversations/:id/messages", async (request) => {
     const c = ownConversation(request, (request.params as { id: string }).id);
-    const body = (request.body ?? {}) as { text?: unknown; mode?: unknown; uiAction?: unknown };
+    const body = (request.body ?? {}) as { text?: unknown; mode?: unknown; uiAction?: unknown; documentIds?: unknown };
     const text = typeof body.text === "string" ? body.text.trim() : "";
     const mode = body.mode === "figure" ? "figure" : "auto";
     const uiAction = parseUiAction(body.uiAction);
-    if (!text && !uiAction) throw badRequest("Type a message first.");
+    const documents = parseDocuments(deps, body.documentIds, c);
+    if (!text && !uiAction && !documents.length) throw badRequest("Type a message first.");
     if (text.length > 20_000) throw badRequest("That message is too long.");
     const busy = db.prepare("SELECT 1 FROM messages WHERE conversation_id = ? AND status = 'streaming'").get(c.id);
     if (busy) throw badRequest("Wait for the current reply to finish.");
@@ -299,9 +342,14 @@ export function chatRoutes(app: FastifyInstance, deps: Deps, engine: ChatEngine)
       const insert = db.prepare(
         "INSERT INTO messages (id, conversation_id, user_id, role, status, parts_json, error_json, ui_action_json, created_at) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)",
       );
-      insert.run(userId, c.id, request.user.id, "user", "complete", JSON.stringify(text ? [{ type: "text", text }] : []), uiAction ? JSON.stringify(uiAction) : null, t);
+      const userParts: Part[] = [
+        ...documents.map((d): Part => ({ type: "document", documentId: d.id, name: d.name, pages: d.pages })),
+        ...(text ? [{ type: "text" as const, text }] : []),
+      ];
+      insert.run(userId, c.id, request.user.id, "user", "complete", JSON.stringify(userParts), uiAction ? JSON.stringify(uiAction) : null, t);
       insert.run(assistantId, c.id, request.user.id, "assistant", "streaming", "[]", null, t + 1);
-      const title = c.title === NEW_TITLE ? (text || NEW_TITLE).split("\n")[0].slice(0, 48) : c.title;
+      const firstLine = text || documents[0]?.name.replace(/\.pdf$/i, "") || NEW_TITLE;
+      const title = c.title === NEW_TITLE ? firstLine.split("\n")[0].slice(0, 48) : c.title;
       db.prepare("UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?").run(title, t, c.id);
     });
     engine.start(c, assistantId, mode);
@@ -373,6 +421,22 @@ function streamEvents(request: FastifyRequest, reply: FastifyReply, deps: Deps, 
   if (done || !engine.isLive(messageId)) end();
 }
 
+/** Documents to attach: uploaded to this chat by this user, at most three per message. */
+function parseDocuments(deps: Deps, value: unknown, c: ConversationRow): DocumentRow[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.some((v) => typeof v !== "string")) throw badRequest("documentIds must be a list of document ids.");
+  if (value.length > 3) throw badRequest("Attach at most three documents to one message.");
+  return [...new Set(value as string[])].map((id) => {
+    const d = deps.documents?.get(id);
+    if (!d || d.user_id !== c.user_id || d.conversation_id !== c.id) throw notFound("That document");
+    return d;
+  });
+}
+
+function documentText(d: DocumentRow) {
+  return d.text.trim() ? d.text : "(This PDF has no text layer; it is probably scanned. Only its name is known.)";
+}
+
 function parseUiAction(value: unknown): UiAction | null {
   if (!value || typeof value !== "object") return null;
   const a = value as Record<string, unknown>;
@@ -399,4 +463,5 @@ export function deleteConversation(deps: Deps, engine: ChatEngine, id: string) {
     deps.db.prepare("DELETE FROM conversations WHERE id = ?").run(id);
     deps.db.prepare("INSERT INTO deletions (user_id, kind, item_id, deleted_at) VALUES (?, 'conversation', ?, ?)").run(c.user_id, id, deps.now());
   });
+  deps.documents?.sweep();
 }
