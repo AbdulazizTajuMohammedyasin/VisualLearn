@@ -78,6 +78,7 @@ class MainActivity : ComponentActivity() {
             "checks" -> controller.runChecks()
             "demo" -> controller.buildDemo()
             "figure" -> intent.getStringExtra("prompt")?.let { app.figureJobs.create(it, "dark") }
+            "shell" -> intent.getStringExtra("cmd")?.let(controller::runDebugCommand)
         }
     }
 

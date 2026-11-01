@@ -56,6 +56,11 @@ class EnvController(private val appContext: Context) {
         runAsset("setup.sh")
     }
 
+    /** Debug builds: runs [command] in the guest and logs its output. */
+    fun runDebugCommand(command: String) = launchTask("Shell") {
+        env.run(command, onLine = ::log)
+    }
+
     fun isToolsReady(): Boolean = env.guestFile(TOOLS_MARKER).exists()
 
     fun installAsset(asset: String, guestPath: String) {
