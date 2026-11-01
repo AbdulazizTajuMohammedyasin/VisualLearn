@@ -4,12 +4,14 @@ import { ChatEngine, chatRoutes } from "./chat.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError } from "./errors.ts";
+import { figureRoutes, pageRoutes, type Figures } from "./figures.ts";
 import type { ModelRegistry } from "./models.ts";
 import { compareVersions } from "./util.ts";
 
 /** Deletes an account and everything it owns (section 3, required by Google Play). */
 export function deleteUser(deps: Deps, userId: string) {
-  // Rows owned by the user go with it through ON DELETE CASCADE.
+  // Stored pages are files; the rest goes with the user row through ON DELETE CASCADE.
+  deps.figures?.deleteForUser(userId);
   deps.db.prepare("DELETE FROM users WHERE id = ?").run(userId);
 }
 
@@ -21,8 +23,8 @@ export interface Deps {
   mailer: Mailer;
   google: GoogleVerifier | null;
   models: ModelRegistry;
-  /** Starts figure jobs for chat replies; null until the figure workers exist. */
-  figures: FigureService | null;
+  /** Figure jobs; null runs chat without figures. */
+  figures: Figures | null;
   /** The model's instructions, including the OpenUI component library (ui-library/dist/system-prompt.md). */
   chatSystemPrompt: string;
   /** The OpenUI library version programs are written for. */
@@ -33,6 +35,8 @@ export interface Deps {
 export interface FigureService {
   /** Queues a figure job and returns its id. */
   create(userId: string, prompt: string, conversationId: string | null): string;
+  /** Stops and removes everything an account owns, before the account is deleted. */
+  deleteForUser(userId: string): void;
 }
 
 /** Builds the HTTP app. Every route lives under /v1 (section 2). */
@@ -67,6 +71,7 @@ export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): 
       });
 
       v1.get("/health", async () => ({ ok: true }));
+      if (deps.figures) pageRoutes(v1, deps.figures);
 
       v1.register(async (auth) => authRoutes(auth, deps, deps));
 
@@ -82,6 +87,7 @@ export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): 
         });
 
         chatRoutes(authed, deps, chat);
+        if (deps.figures) figureRoutes(authed, deps, deps.figures);
       });
     },
     { prefix: "/v1" },

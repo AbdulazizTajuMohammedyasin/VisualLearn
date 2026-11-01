@@ -5,6 +5,11 @@ import { loadConfig } from "../src/config.ts";
 import { openDb } from "../src/db.ts";
 import { ModelRegistry } from "../src/models.ts";
 import { chatSystemPrompt } from "../src/prompt.ts";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Figures } from "../src/figures.ts";
+import { DevRunner, type FigureRunner } from "../src/runners.ts";
 
 export interface TestServer {
   app: FastifyInstance;
@@ -15,7 +20,11 @@ export interface TestServer {
 }
 
 /** A server on an in-memory database with development auth and a controllable clock. */
-export async function testServer(env: Record<string, string> = {}, google: GoogleVerifier | null = null): Promise<TestServer> {
+export async function testServer(
+  env: Record<string, string> = {},
+  google: GoogleVerifier | null = null,
+  figures: { workers?: number; runner?: FigureRunner } = {},
+): Promise<TestServer> {
   const clock = { now: Date.parse("2026-11-01T12:00:00Z") };
   const mail = new Map<string, string>();
   const config = loadConfig({ VL_DEV_AUTH: "1", VL_DATA_DIR: ":memory:", ...env });
@@ -32,6 +41,11 @@ export async function testServer(env: Record<string, string> = {}, google: Googl
     uiLibraryVersion: "1.0.0",
     log: () => {},
   };
+  deps.figures = new Figures(deps, {
+    workers: figures.workers ?? 1,
+    runner: figures.runner ?? new DevRunner(2),
+    pagesDir: mkdtempSync(join(tmpdir(), "vl-pages-")),
+  });
   const app = await buildApp(deps);
   return { app, deps, clock, mail };
 }

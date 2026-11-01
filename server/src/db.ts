@@ -78,6 +78,33 @@ const MIGRATIONS: string[] = [
      id INTEGER PRIMARY KEY,
      json TEXT NOT NULL
    );`,
+  // 3: figure jobs
+  `CREATE TABLE figures (
+     id TEXT PRIMARY KEY,
+     user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+     conversation_id TEXT REFERENCES conversations(id) ON DELETE SET NULL,
+     prompt TEXT NOT NULL,
+     theme TEXT NOT NULL,
+     status TEXT NOT NULL,
+     stage TEXT,
+     message TEXT,
+     progress REAL,
+     title TEXT,
+     summary TEXT,
+     error_json TEXT,
+     session_id TEXT,
+     dark_sha TEXT,
+     dark_bytes INTEGER,
+     light_sha TEXT,
+     light_bytes INTEGER,
+     queued_at INTEGER NOT NULL,
+     created_at INTEGER NOT NULL,
+     updated_at INTEGER NOT NULL,
+     started_at INTEGER,
+     finished_at INTEGER
+   );
+   CREATE INDEX figures_by_user ON figures (user_id, created_at);
+   CREATE INDEX figures_by_status ON figures (status, queued_at);`,
 ];
 
 /** Opens (or creates) the database and brings its schema up to date. */

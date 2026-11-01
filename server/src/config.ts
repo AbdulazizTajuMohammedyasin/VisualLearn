@@ -21,6 +21,14 @@ export interface Config {
   /** The ui-library's generated prompt (npm run prompt) and the version it describes. */
   uiPromptFile: string;
   uiLibraryVersion: string;
+  /** Figure workers running at once; size it to the hardware and provider rate limits. */
+  figureWorkers: number;
+  /** A checkout of the Anatomy skill; without it only the development runner works. */
+  anatomyDir: string;
+  openCodeBin: string;
+  figureTimeoutMs: number;
+  /** Development runner: time per stage. */
+  devFigureStageMs: number;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -40,5 +48,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     devAuth,
     uiPromptFile: env.VL_UI_PROMPT ?? join(process.cwd(), "..", "ui-library", "dist", "system-prompt.md"),
     uiLibraryVersion: env.VL_UI_LIBRARY_VERSION ?? "1.0.0",
+    figureWorkers: Math.max(1, Number(env.VL_FIGURE_WORKERS ?? 2)),
+    anatomyDir: env.VL_ANATOMY_DIR ?? "",
+    openCodeBin: env.VL_OPENCODE_BIN ?? "opencode",
+    figureTimeoutMs: Number(env.VL_FIGURE_TIMEOUT_MIN ?? 120) * 60_000,
+    devFigureStageMs: Number(env.VL_DEV_FIGURE_STAGE_MS ?? 4000),
   };
 }
