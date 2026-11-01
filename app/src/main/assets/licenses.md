@@ -12,6 +12,8 @@ VisualLearn is built on the work of these projects. Thank you.
 
 **Coil**: Apache License 2.0.
 
+**Sign in with Google (Credential Manager, Google Identity)**: Apache License 2.0.
+
 ## Figures
 
 Figures are built on VisualLearn's servers with **Anatomy** by Ryan (wheresryan22), MIT License: https://github.com/wheresryan22/anatomy

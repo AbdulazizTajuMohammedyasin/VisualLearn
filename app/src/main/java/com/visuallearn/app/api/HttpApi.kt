@@ -32,11 +32,22 @@ class HttpApi(
         .build()
     private val streamClient = client.newBuilder().readTimeout(60, TimeUnit.SECONDS).build()
 
-    override suspend fun signIn(provider: String, idToken: String): Tokens {
-        val body = JSONObject().put("provider", provider).put("idToken", idToken)
-        val t = parseTokens(call("POST", "/auth/session", body, auth = false))
-        tokens.save(t)
-        return t
+    override suspend fun signInWithGoogle(idToken: String): Tokens =
+        session(JSONObject().put("provider", "google").put("idToken", idToken))
+
+    override suspend fun startEmailSignIn(email: String) {
+        call("POST", "/auth/email/start", JSONObject().put("email", email), auth = false)
+    }
+
+    override suspend fun signInWithEmail(email: String, code: String): Tokens =
+        session(JSONObject().put("provider", "email").put("email", email).put("code", code))
+
+    private suspend fun session(body: JSONObject): Tokens =
+        parseTokens(call("POST", "/auth/session", body, auth = false)).also(tokens::save)
+
+    override suspend fun deleteAccount() {
+        call("DELETE", "/me")
+        tokens.clear()
     }
 
     override suspend fun signOut() {
@@ -45,10 +56,7 @@ class HttpApi(
         if (refresh != null) runCatching { call("DELETE", "/auth/session", JSONObject().put("refreshToken", refresh), auth = false) }
     }
 
-    override suspend fun me(): Account {
-        val o = call("GET", "/me")
-        return Account(parseUser(o.getJSONObject("user")), parseQuota(o.getJSONObject("quota")))
-    }
+    override suspend fun me(): User = parseUser(call("GET", "/me").getJSONObject("user"))
 
     override suspend fun conversations(): List<ConversationSummary> =
         call("GET", "/conversations?limit=100").getJSONArray("items").objects().map(::parseSummary)
@@ -227,11 +235,10 @@ class HttpApi(
         o.getString("refreshToken"),
     )
 
-    private fun parseUser(o: JSONObject) =
-        User(o.getString("id"), o.optString("displayName"), o.optStringOrNull("email"), o.optStringOrNull("avatarUrl"))
-
-    private fun parseQuota(o: JSONObject) =
-        Quota(o.optString("plan"), o.optInt("figuresRemaining"), o.optInt("figuresPerPeriod"), o.optStringOrNull("resetsAt"))
+    private fun parseUser(o: JSONObject) = User(
+        o.getString("id"), o.optString("displayName"), o.optStringOrNull("email"), o.optStringOrNull("avatarUrl"),
+        o.optString("role", "user"),
+    )
 
     private fun parseSummary(o: JSONObject) = ConversationSummary(o.getString("id"), o.optString("title"), o.optString("updatedAt"))
 

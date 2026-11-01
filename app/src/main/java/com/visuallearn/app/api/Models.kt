@@ -2,11 +2,7 @@ package com.visuallearn.app.api
 
 /** Types mirroring docs/server-api.md. */
 
-data class User(val id: String, val displayName: String, val email: String?, val avatarUrl: String?)
-
-data class Quota(val plan: String, val figuresRemaining: Int, val figuresPerPeriod: Int, val resetsAt: String?)
-
-data class Account(val user: User, val quota: Quota)
+data class User(val id: String, val displayName: String, val email: String?, val avatarUrl: String?, val role: String)
 
 data class Tokens(val accessToken: String, val accessTokenExpiresAt: Long, val refreshToken: String)
 

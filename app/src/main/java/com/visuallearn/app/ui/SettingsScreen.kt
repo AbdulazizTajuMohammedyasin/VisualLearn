@@ -9,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -31,7 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.visuallearn.app.api.Account
+import com.visuallearn.app.api.User
 import com.visuallearn.app.api.VisualLearnApi
 import com.visuallearn.app.settings.Settings
 import kotlinx.coroutines.launch
@@ -47,7 +48,9 @@ fun SettingsScreen(
 ) {
     val state by settings.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
-    var account by remember { mutableStateOf<Account?>(null) }
+    var account by remember { mutableStateOf<User?>(null) }
+    var confirmDelete by remember { mutableStateOf(false) }
+    var deleteError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) { account = runCatching { api.me() }.getOrNull() }
 
     Scaffold(
@@ -67,16 +70,16 @@ fun SettingsScreen(
             if (a == null) {
                 Text("Loading…", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
-                Text(a.user.displayName, style = MaterialTheme.typography.bodyLarge)
-                a.user.email?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                Text(
-                    "${a.quota.figuresRemaining} of ${a.quota.figuresPerPeriod} figures left on the ${a.quota.plan} plan",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
+                Text(a.displayName, style = MaterialTheme.typography.bodyLarge)
+                a.email?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
-            TextButton(onClick = { scope.launch { api.signOut() } }) {
-                Text("Sign out", color = MaterialTheme.colorScheme.error)
+            Row {
+                TextButton(onClick = { scope.launch { api.signOut() } }) { Text("Sign out") }
+                TextButton(onClick = { confirmDelete = true }) {
+                    Text("Delete account", color = MaterialTheme.colorScheme.error)
+                }
             }
+            deleteError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
             HorizontalDivider()
             Text("Figure theme", style = MaterialTheme.typography.titleMedium)
@@ -98,5 +101,22 @@ fun SettingsScreen(
                 trailingContent = { TextButton(onClick = onOpenLicenses) { Text("Open") } },
             )
         }
+    }
+
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Delete your account?") },
+            text = { Text("Your chats and figures are deleted from VisualLearn's servers and this phone. This can't be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    scope.launch {
+                        runCatching { api.deleteAccount() }.onFailure { deleteError = "Couldn't delete the account. Try again." }
+                    }
+                }) { Text("Delete", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text("Cancel") } },
+        )
     }
 }

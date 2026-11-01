@@ -24,17 +24,35 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     private data class FakeFigure(val figure: Figure, val startedAtMs: Long, var cancelled: Boolean = false)
     private data class Script(val conversationId: String, val text: String, val mode: SendMode)
 
-    override suspend fun signIn(provider: String, idToken: String): Tokens {
+    @Volatile private var email: String = "dev@visuallearn.invalid"
+
+    override suspend fun signInWithGoogle(idToken: String): Tokens = session()
+
+    override suspend fun startEmailSignIn(email: String) {
+        delay(400)
+        if (!email.contains('@')) throw ApiException(ApiError("invalid_request", "Enter a valid email address.", false), 400)
+        this.email = email
+    }
+
+    override suspend fun signInWithEmail(email: String, code: String): Tokens {
+        if (code != FAKE_CODE) throw ApiException(ApiError("invalid_code", "That code isn't right. The fake server's code is $FAKE_CODE.", false), 400)
+        return session()
+    }
+
+    private suspend fun session(): Tokens {
         delay(400)
         return Tokens("fake-access", System.currentTimeMillis() + 3_600_000, "fake-refresh").also(tokens::save)
     }
 
     override suspend fun signOut() = tokens.clear()
 
-    override suspend fun me() = Account(
-        User("usr_dev", "Developer", "dev@visuallearn.invalid", null),
-        Quota("dev", figuresRemaining = 99, figuresPerPeriod = 99, resetsAt = null),
-    )
+    override suspend fun me() = User("usr_dev", "Developer", email, null, "user")
+
+    override suspend fun deleteAccount() {
+        conversations.clear()
+        figures.clear()
+        tokens.clear()
+    }
 
     override suspend fun conversations(): List<ConversationSummary> =
         conversations.values.map { ConversationSummary(it.id, it.title, now()) }.reversed()
@@ -195,6 +213,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
 
     private companion object {
         const val ASSET_PREFIX = "asset:///"
+        const val FAKE_CODE = "123456"
         const val UI_LIBRARY_VERSION = "1.0.0"
         const val STAGE_SECONDS = 4.0
         val STAGES = listOf(

@@ -11,10 +11,4 @@ object Backend {
     fun create(context: Context, tokens: TokenStore): VisualLearnApi =
         if (usesFake) FakeApi(context, tokens)
         else HttpApi(BuildConfig.API_BASE_URL, tokens, BuildConfig.VERSION_NAME, BuildConfig.UI_LIBRARY_VERSION)
-
-    /** Debug sign-in skips the identity provider: the fake accepts any token. */
-    val signInLabel = "Continue as developer"
-    suspend fun signIn(api: VisualLearnApi) {
-        api.signIn("dev", "dev")
-    }
 }

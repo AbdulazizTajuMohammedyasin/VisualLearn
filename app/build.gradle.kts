@@ -15,6 +15,8 @@ android {
         versionName = "0.2.0"
         buildConfigField("String", "API_BASE_URL", "\"${providers.gradleProperty("visuallearn.apiBaseUrl").getOrElse("")}\"")
         buildConfigField("String", "UI_LIBRARY_VERSION", "\"1.0.0\"")
+        // OAuth web client ID of the Google Cloud project the server verifies tokens against.
+        buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"${providers.gradleProperty("visuallearn.googleWebClientId").getOrElse("")}\"")
     }
 
     // Release signing comes from the environment so no secrets live in the repo:
@@ -68,6 +70,11 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.okhttp)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services)
+    implementation(libs.googleid)
+    // credentials-play-services-auth pulls an old fragment; ActivityResult APIs need 1.3+.
+    implementation(libs.androidx.fragment)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.compose.material.icons.core)

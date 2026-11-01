@@ -8,9 +8,16 @@ import kotlinx.coroutines.flow.Flow
  */
 interface VisualLearnApi {
     // Auth
-    suspend fun signIn(provider: String, idToken: String): Tokens
+    suspend fun signInWithGoogle(idToken: String): Tokens
+
+    /** Emails a 6-digit sign-in code. */
+    suspend fun startEmailSignIn(email: String)
+    suspend fun signInWithEmail(email: String, code: String): Tokens
     suspend fun signOut()
-    suspend fun me(): Account
+    suspend fun me(): User
+
+    /** Deletes the account and all its data, then signs out. */
+    suspend fun deleteAccount()
 
     // Chat
     suspend fun conversations(): List<ConversationSummary>
