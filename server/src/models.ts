@@ -199,6 +199,24 @@ q2 = MultipleChoice("What does the slider's Y-shaped channel do?", ["Heats the t
 q3 = MultipleChoice("Why doesn't a closed zipper pull apart sideways?", ["The teeth are interlocked in a chain", "The tape is elastic", "The slider is still holding them", "Static electricity"], 0, "Once seated, every tooth is locked by its neighbours on both sides.")
 \`\`\``;
 
+const FLASHCARDS = `\`\`\`openui
+root = Lesson([deck])
+deck = Flashcards("Zipper parts", [c1, c2, c3, c4])
+c1 = Card("Teeth", "Interlocking elements along each tape; a bump on one seats in the hollow of the next.")
+c2 = Card("Slider", "The part you pull. Its Y-shaped channel brings the two rows together or wedges them apart.")
+c3 = Card("Tape", "The fabric strips the teeth are fixed to and that are sewn into the garment.")
+c4 = Card("Stops", "Small clamps at each end that keep the slider from running off the teeth.")
+\`\`\``;
+
+const STEPS = `\`\`\`openui
+root = Lesson([how, tip])
+how = StepExplainer("How a zipper closes", [s1, s2, s3])
+s1 = Step("Rows apart", "The two rows of teeth enter the slider from the wide end, one on each side of the wedge.")
+s2 = Step("Guided together", "The Y-shaped channel steers both rows toward the narrow end at an angle.")
+s3 = Step("Teeth seat", "At the narrow end each bump slips into the next tooth's hollow, and the chain locks.")
+tip = Callout("Pulling the slider the other way drives the wedge between the rows and unhooks them.", "tip")
+\`\`\``;
+
 /** Canned replies so the whole system runs without any model key (VL_DEV_AUTH style development). */
 async function* devModel(turn: ChatTurn): AsyncGenerator<ChatEvent> {
   const last = turn.messages.at(-1);
@@ -209,10 +227,14 @@ async function* devModel(turn: ChatTurn): AsyncGenerator<ChatEvent> {
     reply = "Let's look at what tripped you up. Each wrong answer missed the same idea: the teeth lock because every bump sits in the next tooth's hollow, and the slider only guides them together.";
   } else if (wantsFigure && turn.startFigure) {
     reply = "Good one to see in motion. I'm building an interactive figure of it now; the card below shows its progress.";
-  } else if (["quiz", "test me", "flashcard", "mcq"].some((w) => text.includes(w))) {
+  } else if (["flashcard", "cards"].some((w) => text.includes(w))) {
+    reply = `Here are flashcards for the parts of a zipper. Tap a card to flip it.\n\n${FLASHCARDS}`;
+  } else if (["step by step", "step-by-step", "explain how", "walk me through"].some((w) => text.includes(w))) {
+    reply = `Let's take it one step at a time.\n\n${STEPS}`;
+  } else if (["quiz", "test me", "mcq"].some((w) => text.includes(w))) {
     reply = `Here's a short quiz. Answer each question to see the explanation.\n\n${QUIZ}\n\nTap **Explain my mistakes** at the end if any trip you up.`;
   } else {
-    reply = "This is the development model on the VisualLearn server, so the answer is canned.\n\n**How it works.** An idea breaks into parts that each do one job. Ask me to *show* it for a figure, or say *quiz me* for a check.";
+    reply = "This is the development model on the VisualLearn server, so the answer is canned.\n\n**How it works.** An idea breaks into parts that each do one job. Ask me to *show* it for a figure, say *quiz me* for a check, ask for *flashcards*, or ask me to explain it *step by step*.";
   }
   for (const word of reply.split(/(?<= )/)) {
     if (turn.signal.aborted) return;

@@ -70,6 +70,17 @@ test("an openui block becomes a ui part", async () => {
   assert.ok(stream.some((e) => e.event === "ui.delta"));
 });
 
+test("the development model also answers with flashcards and step-by-step explanations", async () => {
+  const server = await testServer();
+  const { headers } = await signIn(server);
+  for (const [ask, component] of [["Flashcards on zippers please", "Flashcards"], ["Explain how a zipper closes step by step", "StepExplainer"]]) {
+    const { assistantMessage } = await send(server, headers, ask);
+    const parts = (await events(server, headers, assistantMessage.id)).at(-1)!.data.message.parts;
+    const ui = parts.find((p: { type: string }) => p.type === "ui");
+    assert.match(ui.program, new RegExp(`^root = Lesson\\(.*\\n\\w+ = ${component}\\(`));
+  }
+});
+
 test("reconnecting with Last-Event-ID replays only what was missed", async () => {
   const server = await testServer();
   const { headers } = await signIn(server);
