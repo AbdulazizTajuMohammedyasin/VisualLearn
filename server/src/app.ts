@@ -5,6 +5,7 @@ import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import { figureRoutes, pageRoutes, type Figures } from "./figures.ts";
+import { syncRoutes } from "./sync.ts";
 import type { ModelRegistry } from "./models.ts";
 import { compareVersions } from "./util.ts";
 
@@ -88,6 +89,7 @@ export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): 
 
         chatRoutes(authed, deps, chat);
         if (deps.figures) figureRoutes(authed, deps, deps.figures);
+        syncRoutes(authed, deps, deps.figures);
       });
     },
     { prefix: "/v1" },
