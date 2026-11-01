@@ -52,7 +52,7 @@ class ApiJsonTest {
             "conv_1",
             "Zippers",
             listOf(
-                Message("m1", Role.USER, MessageStatus.COMPLETE, listOf(Part.Text("Quiz me"))),
+                Message("m1", Role.USER, MessageStatus.COMPLETE, listOf(Part.Document("doc_1", "Engines.pdf", 12), Part.Text("Quiz me"))),
                 Message(
                     "m2", Role.ASSISTANT, MessageStatus.COMPLETE,
                     listOf(Part.Text("Here you go."), Part.Ui("root = Quiz(\"Z\", [q1])\n", "1.0.0"), Part.Figure("fig_1")),

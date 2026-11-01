@@ -16,6 +16,8 @@ sealed interface Part {
     data class Text(val text: String) : Part
     data class Ui(val program: String, val libraryVersion: String) : Part
     data class Figure(val figureId: String) : Part
+    /** A PDF the learner attached to their message. */
+    data class Document(val documentId: String, val name: String, val pages: Int) : Part
 }
 
 data class Message(
@@ -29,6 +31,9 @@ data class Message(
 data class Conversation(val id: String, val title: String, val messages: List<Message>)
 
 /** Sent with a message when an OpenUI component asks for a follow-up (@ToAssistant). */
+/** A PDF stored on the server, ready to attach to a message. */
+data class UploadedDocument(val id: String, val name: String, val pages: Int, val bytes: Long)
+
 data class UiAction(val sourceMessageId: String, val name: String, val context: Map<String, Any?>)
 
 enum class SendMode { AUTO, FIGURE }

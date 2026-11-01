@@ -28,12 +28,16 @@ interface VisualLearnApi {
     suspend fun conversation(id: String): Conversation
     suspend fun deleteConversation(id: String)
 
+    /** Stores a PDF in a chat so a message can attach it; the server reads its text and pages. */
+    suspend fun uploadDocument(conversationId: String, name: String, pdf: ByteArray): UploadedDocument
+
     /** Returns the stored user message and the assistant message that will stream. */
     suspend fun sendMessage(
         conversationId: String,
         text: String,
         mode: SendMode,
         uiAction: UiAction? = null,
+        documentIds: List<String> = emptyList(),
     ): Pair<Message, Message>
 
     /** The assistant reply as it streams; completes after Done or Failed. */

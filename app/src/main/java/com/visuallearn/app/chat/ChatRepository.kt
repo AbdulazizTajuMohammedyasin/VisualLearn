@@ -22,6 +22,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class ChatState(
     val conversationId: String? = null,
@@ -29,9 +30,17 @@ data class ChatState(
     val messages: List<Message> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
+    /** Attached PDFs are being sent to the server before the message goes. */
+    val uploading: Boolean = false,
 ) {
     val isStreaming get() = messages.any { it.status == MessageStatus.STREAMING }
 }
+
+/** A PDF picked to send with the next message; [read] loads it when it is uploaded. */
+class PdfAttachment(val name: String, val bytes: Long, val read: () -> ByteArray)
+
+/** The server's limit for one PDF. */
+const val MAX_PDF_BYTES = 25L * 1024 * 1024
 
 /**
  * The open conversation; replies stream from the server as message parts. Finished
@@ -118,20 +127,32 @@ class ChatRepository(
         _state.value = ChatState()
     }
 
-    fun send(text: String, mode: SendMode, uiAction: UiAction? = null) {
+    /** Sends a message; [attachments] are uploaded first and go with it. */
+    fun send(text: String, mode: SendMode, uiAction: UiAction? = null, attachments: List<PdfAttachment> = emptyList()) =
+        send(text, mode, uiAction, attachments, emptyList())
+
+    private fun send(text: String, mode: SendMode, uiAction: UiAction?, attachments: List<PdfAttachment>, documentIds: List<String>) {
         val trimmed = text.trim()
-        if ((trimmed.isEmpty() && uiAction == null) || _state.value.isStreaming) return
+        if ((trimmed.isEmpty() && uiAction == null && attachments.isEmpty() && documentIds.isEmpty()) || _state.value.isStreaming) return
+        attachments.firstOrNull { it.bytes > MAX_PDF_BYTES }?.let { big ->
+            _state.update { it.copy(error = "${big.name} is too big. The limit is 25 MB.") }
+            return
+        }
         scope.launch {
-            _state.update { it.copy(error = null) }
+            _state.update { it.copy(error = null, uploading = attachments.isNotEmpty()) }
             runCatching {
+                val title = trimmed.ifBlank { attachments.firstOrNull()?.name?.removeSuffix(".pdf").orEmpty() }
                 val conversationId = _state.value.conversationId ?: api.createConversation().id.also { id ->
-                    _state.update { it.copy(conversationId = id, title = trimmed.lineSequence().first().take(48)) }
+                    _state.update { it.copy(conversationId = id, title = title.lineSequence().first().take(48)) }
                 }
-                val (user, assistant) = api.sendMessage(conversationId, trimmed, mode, uiAction)
-                _state.update { it.copy(messages = it.messages + user + assistant) }
+                val uploaded = attachments.map { a ->
+                    withContext(Dispatchers.IO) { api.uploadDocument(conversationId, a.name, a.read()) }.id
+                }
+                val (user, assistant) = api.sendMessage(conversationId, trimmed, mode, uiAction, documentIds + uploaded)
+                _state.update { it.copy(messages = it.messages + user + assistant, uploading = false) }
                 refreshList()
                 follow(assistant.id)
-            }.onFailure { e -> _state.update { it.copy(error = e.userMessage()) } }
+            }.onFailure { e -> _state.update { it.copy(error = e.userMessage(), uploading = false) } }
         }
     }
 
@@ -157,8 +178,10 @@ class ChatRepository(
     fun retry() {
         val lastUser = _state.value.messages.lastOrNull { it.role == Role.USER } ?: return
         val text = lastUser.parts.filterIsInstance<Part.Text>().joinToString("") { it.text }
+        // Documents are already on the server: send their ids again rather than the files.
+        val documentIds = lastUser.parts.filterIsInstance<Part.Document>().map { it.documentId }
         _state.update { s -> s.copy(messages = s.messages.dropLastWhile { it.role == Role.ASSISTANT && it.status == MessageStatus.FAILED }) }
-        send(text, SendMode.AUTO)
+        send(text, SendMode.AUTO, null, emptyList(), documentIds)
     }
 
     private fun follow(messageId: String) {

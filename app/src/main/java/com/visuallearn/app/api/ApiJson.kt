@@ -41,6 +41,7 @@ internal object ApiJson {
         "text" -> Part.Text(o.optString("text"))
         "ui" -> Part.Ui(o.optString("program"), o.optString("libraryVersion"))
         "figure" -> Part.Figure(o.getString("figureId"))
+        "document" -> Part.Document(o.getString("documentId"), o.optString("name"), o.optInt("pages"))
         else -> null
     }
 
@@ -101,6 +102,7 @@ internal object ApiJson {
         is Part.Text -> JSONObject().put("type", "text").put("text", p.text)
         is Part.Ui -> JSONObject().put("type", "ui").put("program", p.program).put("libraryVersion", p.libraryVersion)
         is Part.Figure -> JSONObject().put("type", "figure").put("figureId", p.figureId)
+        is Part.Document -> JSONObject().put("type", "document").put("documentId", p.documentId).put("name", p.name).put("pages", p.pages)
     }
 
     fun write(f: Figure): JSONObject = JSONObject()

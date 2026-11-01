@@ -1,5 +1,7 @@
 package com.visuallearn.app.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,6 +40,7 @@ import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
@@ -73,6 +76,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role as SemanticsRole
 import androidx.compose.ui.semantics.role
@@ -89,6 +93,7 @@ import com.visuallearn.app.api.Part
 import com.visuallearn.app.api.Role
 import com.visuallearn.app.api.SendMode
 import com.visuallearn.app.chat.ChatRepository
+import com.visuallearn.app.chat.PdfAttachment
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.openui.OpenUiView
 import kotlinx.coroutines.launch
@@ -116,6 +121,13 @@ fun ChatScreen(
     val summaries by chat.summaries.collectAsStateWithLifecycle()
     val figureMap by figures.figures.collectAsStateWithLifecycle()
     val previews by figures.previews.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    // PDFs picked for the next message; at most three, as the server allows.
+    var attachments by remember { mutableStateOf(listOf<PdfAttachment>()) }
+    val pickPdfs = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        attachments = (attachments + uris.map { pdfAttachment(context, it) }).distinctBy { it.name }.take(3)
+    }
+    val attach = { pickPdfs.launch(arrayOf("application/pdf")) }
     val darkTheme = isSystemInDarkTheme()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -181,6 +193,7 @@ fun ChatScreen(
                             onOpenFigure = onOpenFigure,
                             onOpenFigures = onOpenFigures,
                             onSuggestion = { chat.send(it, SendMode.AUTO) },
+                            onAttach = attach,
                         )
                         else -> MessageList(
                             messages = state.messages,
@@ -220,7 +233,14 @@ fun ChatScreen(
                 if (online) {
                     Composer(
                         streaming = state.isStreaming,
-                        onSend = { text, figureMode -> chat.send(text, if (figureMode) SendMode.FIGURE else SendMode.AUTO) },
+                        uploading = state.uploading,
+                        attachments = attachments,
+                        onAttach = attach,
+                        onRemove = { a -> attachments = attachments - a },
+                        onSend = { text, figureMode ->
+                            chat.send(text, if (figureMode) SendMode.FIGURE else SendMode.AUTO, attachments = attachments)
+                            attachments = emptyList()
+                        },
                         onStop = chat::stop,
                     )
                 } else {
@@ -251,6 +271,7 @@ private fun EmptyState(
     onOpenFigure: (String) -> Unit,
     onOpenFigures: () -> Unit,
     onSuggestion: (String) -> Unit,
+    onAttach: () -> Unit,
 ) {
     // Sits at the bottom, near the thumb and the composer; scrolls on short screens.
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -260,8 +281,25 @@ private fun EmptyState(
         ) {
             TwoLineHeading(
                 "See how things work.",
-                "Ask, and watch it get built.",
+                "Ask, or bring your notes.",
                 Modifier.padding(horizontal = 24.dp),
+            )
+            // The main way in: a PDF becomes explanations, flashcards, a quiz and figures.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp),
+            ) {
+                Button(onClick = onAttach, enabled = enabled, contentPadding = PaddingValues(start = 18.dp, end = 22.dp, top = 14.dp, bottom = 14.dp)) {
+                    PageGlyph(size = 20.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Learn from a PDF")
+                }
+            }
+            Text(
+                "Lecture notes, a chapter or a paper. You get explanations, flashcards and a quiz, and 3D figures where seeing it move helps.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 24.dp, end = 40.dp, top = 12.dp),
             )
             if (recent.isNotEmpty()) {
                 Row(
@@ -341,7 +379,7 @@ private fun MessageList(
     ) {
         items(messages, key = { it.id }) { m ->
             when (m.role) {
-                Role.USER -> UserBubble(m.parts.filterIsInstance<Part.Text>().joinToString("") { it.text })
+                Role.USER -> UserMessage(m.parts)
                 Role.ASSISTANT -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (m.parts.isEmpty() && m.status == MessageStatus.STREAMING) TypingDots()
                     m.parts.forEachIndexed { index, part ->
@@ -349,6 +387,7 @@ private fun MessageList(
                             is Part.Text -> if (part.text.isNotBlank()) MarkdownText(part.text)
                             is Part.Ui -> uiPart(m, index, part)
                             is Part.Figure -> figureCard(part.figureId)
+                            is Part.Document -> {}
                         }
                     }
                     if (m.status == MessageStatus.FAILED) {
@@ -364,15 +403,20 @@ private fun MessageList(
     }
 }
 
+/** The learner's message: attached documents, then what they wrote. */
 @Composable
-private fun UserBubble(text: String) {
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            shape = RoundedCornerShape(22.dp),
-            modifier = Modifier.widthIn(max = 320.dp),
-        ) {
-            Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+private fun UserMessage(parts: List<Part>) {
+    val text = parts.filterIsInstance<Part.Text>().joinToString("") { it.text }
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        parts.filterIsInstance<Part.Document>().forEach { DocumentChip(it.name, pagesLabel(it.pages)) }
+        if (text.isNotBlank()) {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shape = RoundedCornerShape(22.dp),
+                modifier = Modifier.widthIn(max = 320.dp),
+            ) {
+                Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+            }
         }
     }
 }
@@ -406,7 +450,15 @@ private fun OfflineNotice() {
 }
 
 @Composable
-private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onStop: () -> Unit) {
+private fun Composer(
+    streaming: Boolean,
+    uploading: Boolean,
+    attachments: List<PdfAttachment>,
+    onAttach: () -> Unit,
+    onRemove: (PdfAttachment) -> Unit,
+    onSend: (String, Boolean) -> Unit,
+    onStop: () -> Unit,
+) {
     var text by rememberSaveable { mutableStateOf("") }
     var figureMode by rememberSaveable { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.background) {
@@ -417,10 +469,22 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
+                    if (uploading) {
+                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 14.dp, top = 12.dp)) {
+                            StatusDot(StatusColors.Building)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Sending your PDF", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                    if (attachments.isNotEmpty()) {
+                        Column(Modifier.padding(start = 6.dp, end = 6.dp, top = 6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            attachments.forEach { a -> DocumentChip(a.name, sizeLabel(a.bytes), onRemove = { onRemove(a) }) }
+                        }
+                    }
                     TextField(
                         value = text,
                         onValueChange = { text = it },
-                        placeholder = { Text("Ask VisualLearn") },
+                        placeholder = { Text(if (attachments.isEmpty()) "Ask VisualLearn" else "Ask about it, or just send") },
                         maxLines = 6,
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
@@ -431,6 +495,10 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 8.dp, end = 2.dp, bottom = 2.dp)) {
+                        IconButton(onClick = onAttach, enabled = !uploading && attachments.size < 3) {
+                            Icon(Icons.Filled.Add, "Attach a PDF")
+                        }
+                        Spacer(Modifier.width(4.dp))
                         FigureToggle(figureMode) { figureMode = !figureMode }
                         Spacer(Modifier.weight(1f))
                         if (streaming) {
@@ -438,7 +506,7 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
                         } else {
                             FilledIconButton(
                                 onClick = { onSend(text, figureMode); text = ""; figureMode = false },
-                                enabled = text.isNotBlank(),
+                                enabled = !uploading && (text.isNotBlank() || attachments.isNotEmpty()),
                                 colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
                             ) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
                         }

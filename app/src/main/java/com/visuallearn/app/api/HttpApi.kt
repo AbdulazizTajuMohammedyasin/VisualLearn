@@ -19,8 +19,10 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.UUID
@@ -80,11 +82,18 @@ class HttpApi(
         call("DELETE", "/conversations/$id")
     }
 
+    override suspend fun uploadDocument(conversationId: String, name: String, pdf: ByteArray): UploadedDocument {
+        val path = "/conversations/$conversationId/documents?name=" + java.net.URLEncoder.encode(name, "UTF-8")
+        val o = call("POST", path, raw = pdf.toRequestBody(PDF))
+        return UploadedDocument(o.getString("id"), o.getString("name"), o.getInt("pages"), o.getLong("bytes"))
+    }
+
     override suspend fun sendMessage(
         conversationId: String,
         text: String,
         mode: SendMode,
         uiAction: UiAction?,
+        documentIds: List<String>,
     ): Pair<Message, Message> {
         val body = JSONObject()
             .put("text", text)
@@ -92,6 +101,7 @@ class HttpApi(
             .put("uiAction", uiAction?.let {
                 JSONObject().put("sourceMessageId", it.sourceMessageId).put("name", it.name).put("context", JSONObject(it.context))
             } ?: JSONObject.NULL)
+            .put("documentIds", JSONArray(documentIds))
         val o = call("POST", "/conversations/$conversationId/messages", body, idempotent = true)
         return parseMessage(o.getJSONObject("userMessage")) to parseMessage(o.getJSONObject("assistantMessage"))
     }
@@ -158,10 +168,11 @@ class HttpApi(
         body: JSONObject? = null,
         auth: Boolean = true,
         idempotent: Boolean = false,
+        raw: RequestBody? = null,
     ): JSONObject = withContext(Dispatchers.IO) {
         val idempotencyKey = if (idempotent) UUID.randomUUID().toString() else null
         repeat(2) { attempt ->
-            client.newCall(request(method, path, body, auth, idempotencyKey)).execute().use { response ->
+            client.newCall(request(method, path, raw ?: body?.toString()?.toRequestBody(JSON), auth, idempotencyKey)).execute().use { response ->
                 // One retry after refreshing an expired access token.
                 if (response.code == 401 && auth && attempt == 0 && refresh()) return@use
                 return@withContext parse(response)
@@ -170,14 +181,13 @@ class HttpApi(
         throw ApiException(ApiError("unauthenticated", "Please sign in again.", false), 401)
     }
 
-    private fun request(method: String, path: String, body: JSONObject?, auth: Boolean, idempotencyKey: String?): Request {
+    private fun request(method: String, path: String, requestBody: RequestBody?, auth: Boolean, idempotencyKey: String?): Request {
         val builder = Request.Builder()
             .url(baseUrl.trimEnd('/') + path)
             .header("X-App-Version", appVersion)
             .header("X-UI-Library-Version", uiLibraryVersion)
         if (auth) tokens.current()?.let { builder.header("Authorization", "Bearer ${it.accessToken}") }
         idempotencyKey?.let { builder.header("Idempotency-Key", it) }
-        val requestBody = body?.toString()?.toRequestBody(JSON)
         return builder.method(method, if (method == "GET") null else requestBody ?: "{}".toRequestBody(JSON)).build()
     }
 
@@ -243,5 +253,6 @@ class HttpApi(
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()
+        val PDF = "application/pdf".toMediaType()
     }
 }

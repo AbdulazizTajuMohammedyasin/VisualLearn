@@ -23,6 +23,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     private val conversations = ConcurrentHashMap<String, Conversation>()
     private val figures = ConcurrentHashMap<String, FakeFigure>()
     private val pendingReplies = ConcurrentHashMap<String, Script>()
+    private val documents = ConcurrentHashMap<String, UploadedDocument>()
 
     // For /sync: when each conversation last changed, and when things were deleted (epoch ms).
     private val conversationChangedAt = ConcurrentHashMap<String, Long>()
@@ -30,7 +31,13 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     private val deletedFigures = ConcurrentHashMap<String, Long>()
 
     private data class FakeFigure(val figure: Figure, val startedAtMs: Long, var cancelledAt: String? = null)
-    private data class Script(val conversationId: String, val text: String, val mode: SendMode, val uiAction: UiAction? = null)
+    private data class Script(
+        val conversationId: String,
+        val text: String,
+        val mode: SendMode,
+        val uiAction: UiAction? = null,
+        val documents: List<UploadedDocument> = emptyList(),
+    )
 
     @Volatile private var email: String = "dev@visuallearn.invalid"
 
@@ -110,17 +117,37 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     private fun summary(c: Conversation) =
         ConversationSummary(c.id, c.title, Instant.ofEpochMilli(conversationChangedAt[c.id] ?: 0).toString())
 
-    override suspend fun sendMessage(conversationId: String, text: String, mode: SendMode, uiAction: UiAction?): Pair<Message, Message> {
+    override suspend fun uploadDocument(conversationId: String, name: String, pdf: ByteArray): UploadedDocument {
+        requireOnline()
+        delay(400)
+        if (!String(pdf, 0, minOf(5, pdf.size), Charsets.ISO_8859_1).startsWith("%PDF-")) {
+            throw ApiException(ApiError("invalid_request", "That file isn't a PDF.", false), 400)
+        }
+        // Counts page objects; good enough for a fake.
+        val pages = Regex("/Type\\s*/Page[^s]").findAll(String(pdf, Charsets.ISO_8859_1)).count().coerceAtLeast(1)
+        return UploadedDocument("doc_" + uuid(), name, pages, pdf.size.toLong()).also { documents[it.id] = it }
+    }
+
+    override suspend fun sendMessage(
+        conversationId: String,
+        text: String,
+        mode: SendMode,
+        uiAction: UiAction?,
+        documentIds: List<String>,
+    ): Pair<Message, Message> {
         requireOnline()
         delay(200)
+        val attached = documentIds.mapNotNull { documents[it] }
         val shown = text.ifBlank { uiAction?.let { "(${it.name})" }.orEmpty() }
-        val user = Message("msg_" + uuid(), Role.USER, MessageStatus.COMPLETE, listOf(Part.Text(shown)))
+        val userParts = attached.map { Part.Document(it.id, it.name, it.pages) } + listOfNotNull(shown.takeIf { it.isNotBlank() }?.let(Part::Text))
+        val user = Message("msg_" + uuid(), Role.USER, MessageStatus.COMPLETE, userParts)
         val assistant = Message("msg_" + uuid(), Role.ASSISTANT, MessageStatus.STREAMING, emptyList())
         conversations.computeIfPresent(conversationId) { _, c ->
-            c.copy(title = if (c.messages.isEmpty()) shown.take(48) else c.title, messages = c.messages + user + assistant)
+            val title = shown.ifBlank { attached.firstOrNull()?.name?.removeSuffix(".pdf").orEmpty() }
+            c.copy(title = if (c.messages.isEmpty()) title.take(48) else c.title, messages = c.messages + user + assistant)
         }
         touch(conversationId)
-        pendingReplies[assistant.id] = Script(conversationId, shown, mode, uiAction)
+        pendingReplies[assistant.id] = Script(conversationId, shown, mode, uiAction, attached)
         return user to assistant
     }
 
@@ -141,6 +168,19 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
         }
         delay(500)
         when {
+            script.documents.isNotEmpty() -> {
+                val doc = script.documents.first()
+                streamText(0, "I read **${doc.name}** (${doc.pages} pages). This is the built-in fake server, so the study pack is a fixed example: a quiz to check understanding, and a figure of the main mechanism.")
+                emit(MessageEvent.PartStart(1, Part.Ui("", UI_LIBRARY_VERSION)))
+                SAMPLE_QUIZ.lines().forEach { line ->
+                    delay(60)
+                    emit(MessageEvent.UiDelta(1, line + "\n"))
+                }
+                parts += Part.Ui(SAMPLE_QUIZ, UI_LIBRARY_VERSION)
+                val figure = startFigure("The main mechanism in ${doc.name}", script.conversationId)
+                emit(MessageEvent.PartStart(2, Part.Figure(figure.id)))
+                parts += Part.Figure(figure.id)
+            }
             script.uiAction?.name == "review_mistakes" -> streamText(0, reviewMistakes(script.uiAction))
             script.mode == SendMode.FIGURE || listOf("show me", "figure", "visualize", "draw").any { it in lower } -> {
                 streamText(0, "Good one to see in motion. I'm building an interactive figure of it now; the card below shows its progress, and you'll get a notification when it's ready.")
