@@ -15,7 +15,7 @@ The app is a thin client. All model calls and figure building happen on VisualLe
 | Settings, storage, licences | Done |
 | Queue position for figures ("3rd in line") | Done |
 | Offline read-only mode, kept up to date with `/sync` | Done |
-| Interactive parts (flashcards, quizzes) with [OpenUI](https://github.com/thesysdev/openui) | Placeholder card for now |
+| Interactive parts with [OpenUI](https://github.com/thesysdev/openui): quizzes, flashcards, step-by-step explainers | Done |
 | Server | Not built yet. Debug builds use an in-app fake server |
 
 ## Requirements
@@ -57,6 +57,20 @@ Pass Gradle properties, on the command line or in `~/.gradle/gradle.properties`:
 ./gradlew assembleRelease -Pvisuallearn.apiBaseUrl=https://api.example.com -Pvisuallearn.googleWebClientId=1234-abc.apps.googleusercontent.com
 ```
 
+### The interactive component library
+
+`ui-library/` holds the OpenUI components the model may use (quizzes, flashcards, step-by-step explainers). The server and the app both use it. The app ships a prebuilt copy at `app/src/main/assets/openui/index.html`, so the Android build doesn't need Node. After changing the library:
+
+```sh
+cd ui-library
+npm install
+npm run check    # every example program must parse
+npm run build    # rewrites the app's renderer page
+npm run prompt   # writes dist/system-prompt.md for the server
+```
+
+Bump `LIBRARY_VERSION` in `src/library.tsx` and `UI_LIBRARY_VERSION` in `app/build.gradle.kts` together whenever a component's name or props change.
+
 ### Release signing
 
 Release signing reads from environment variables, so no secrets go in the repo: `VL_KEYSTORE` (path), `VL_KEYSTORE_PASSWORD`, `VL_KEY_ALIAS`, `VL_KEY_PASSWORD`. Without them the release APK is unsigned.
@@ -76,6 +90,7 @@ Release signing reads from environment variables, so no secrets go in the repo: 
 
 - **Chat.** A reply is a list of parts: `text` (Markdown), `figure` (a figure job id) and `ui` (an OpenUI Lang program). They stream over Server-Sent Events, and the stream resumes with `Last-Event-ID` after a dropped connection.
 - **Figures.** A figure is a server job. The app follows its progress, and when it finishes the app downloads the dark and light HTML pages. It checks each page's sha256 and keeps a copy on the phone, so a figure that has loaded once opens without a connection.
+- **Interactive parts.** `OpenUiView` loads the bundled renderer page into a WebView with no network. It sizes itself to the content, and answers survive scrolling, restarts and going offline. Follow-ups such as "Explain my mistakes" are sent as the next message's `uiAction`.
 - **Rendering.** `FigureView` is a WebView with JavaScript on and every network request blocked. A figure can only use what is inside its own HTML file.
 - **Offline.** Chats and figure records are stored on the phone in the server's JSON format (`offline/`). `/sync` brings in changes and deletions made elsewhere whenever the app starts or the connection returns. Without a connection, saved chats and figures still open; asking new questions needs a connection. Signing out wipes the phone's copy.
 - **Sessions.** Tokens are encrypted with an Android Keystore key and refreshed on a 401.
@@ -92,11 +107,13 @@ app/src/main/java/com/visuallearn/app/
   figures/    FiguresRepository: jobs, downloads, page cache, notifications
   figure/     FigureView: sandboxed WebView
   offline/    OfflineStore, Connectivity, SyncManager
+  openui/     OpenUiView: WebView host for interactive parts
   gallery/    Explore gallery from anatomy-community
   settings/   User preferences
   ui/         Compose screens
 app/src/debug/    FakeApi, sample figures, debug Backend
 app/src/release/  release Backend (always HttpApi)
+ui-library/       OpenUI component library: app renderer and server prompt
 docs/server-api.md
 ```
 
