@@ -7,6 +7,7 @@ import { openDb } from "./db.ts";
 import { Figures } from "./figures.ts";
 import { smtpMailer } from "./mail.ts";
 import { ModelRegistry } from "./models.ts";
+import { ChromePreviewer } from "./previews.ts";
 import { chatSystemPrompt } from "./prompt.ts";
 import { DevRunner, OpenCodeRunner, RoutedRunner } from "./runners.ts";
 
@@ -34,7 +35,12 @@ const deps: Deps = {
   log: (m) => log(m),
 };
 // Before buildApp: the figure routes are registered only when the service exists.
-deps.figures = new Figures(deps, { workers: config.figureWorkers, runner, pagesDir: join(config.dataDir, "pages") });
+deps.figures = new Figures(deps, {
+  workers: config.figureWorkers,
+  runner,
+  pagesDir: join(config.dataDir, "pages"),
+  previewer: config.chromeBin ? new ChromePreviewer({ bin: config.chromeBin, noSandbox: config.chromeNoSandbox }) : undefined,
+});
 const app = await buildApp(deps, { logger: true });
 log = (m) => app.log.info(m);
 if (!config.smtpUrl && !config.devAuth) app.log.warn("VL_SMTP_URL isn't set: sign-in codes are only written to this log, so email sign-in won't work for users.");

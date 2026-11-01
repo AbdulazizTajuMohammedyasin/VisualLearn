@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync } from "node:fs";
 import { test } from "node:test";
+import type { Figures } from "../src/figures.ts";
+import type { Previewer } from "../src/previews.ts";
 import type { FigureJob, FigureResult, FigureRunner, RunHooks } from "../src/runners.ts";
 import { signIn, testServer, type TestServer } from "./helpers.ts";
 
@@ -145,6 +148,56 @@ test("deleting a figure removes it, its pages and records it for sync", async ()
   assert.equal((await server.app.inject({ method: "GET", url })).statusCode, 404);
   const row = server.deps.db.prepare("SELECT kind FROM deletions WHERE user_id = ? AND item_id = ?").get(user.id, id) as { kind: string };
   assert.equal(row.kind, "figure");
+});
+
+/** Writes a fake PNG and remembers which pages it was asked to draw. */
+class FakePreviewer implements Previewer {
+  drawn: string[] = [];
+  fail = false;
+
+  async render(pageFile: string, outPng: string) {
+    if (this.fail) throw new Error("no browser");
+    this.drawn.push(readFileSync(pageFile, "utf8"));
+    writeFileSync(outPng, PNG);
+  }
+}
+const PNG = Buffer.from("89504e470d0a1a0a", "hex");
+
+test("a finished figure gets a preview image of its dark page, served signed and deleted with it", async () => {
+  const previewer = new FakePreviewer();
+  const runner = new HeldRunner();
+  const server = await testServer({}, null, { runner, previewer });
+  const { headers } = await signIn(server);
+  const id = (await create(server, headers, "lock")).json().id;
+  await until(() => runner.started.length === 1);
+  assert.equal((await get(server, headers, id)).previewUrl, null);
+
+  runner.finish("lock");
+  await until(async () => (await get(server, headers, id)).previewUrl !== null);
+  assert.deepEqual(previewer.drawn, ["<p>lock dark</p>"]);
+  const url = (await get(server, headers, id)).previewUrl.replace(server.deps.config.publicUrl, "");
+  const image = await server.app.inject({ method: "GET", url });
+  assert.equal(image.statusCode, 200);
+  assert.equal(image.headers["content-type"], "image/png");
+  assert.deepEqual(image.rawPayload, PNG);
+  // The signature covers the file name: a page link can't be turned into a preview link.
+  assert.equal((await server.app.inject({ method: "GET", url: url.replace(".png", ".html") })).statusCode, 404);
+
+  await server.app.inject({ method: "DELETE", url: `/v1/figures/${id}`, headers });
+  assert.equal((await server.app.inject({ method: "GET", url })).statusCode, 404);
+});
+
+test("a figure whose preview can't be drawn still finishes, without one", async () => {
+  const previewer = new FakePreviewer();
+  previewer.fail = true;
+  const server = await testServer({}, null, { previewer });
+  const { headers } = await signIn(server);
+  const id = (await create(server, headers, "x")).json().id;
+  await server.app.inject({ method: "GET", url: `/v1/figures/${id}/events`, headers });
+  await (server.deps.figures as Figures).previewsSettled();
+  const figure = await get(server, headers, id);
+  assert.equal(figure.status, "succeeded");
+  assert.equal(figure.previewUrl, null);
 });
 
 test("other users can't see a figure", async () => {

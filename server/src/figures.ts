@@ -6,6 +6,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Deps, FigureService } from "./app.ts";
 import { transaction } from "./db.ts";
 import { badRequest, conflict, notFound, rateLimited } from "./errors.ts";
+import type { Previewer } from "./previews.ts";
 import { STAGES, type FigureRunner, type Stage } from "./runners.ts";
 import { iso, newId, sha256 } from "./util.ts";
 
@@ -44,6 +45,8 @@ export interface FigureOptions {
   workers: number;
   runner: FigureRunner;
   pagesDir: string;
+  /** Draws preview images of finished figures; without it previewUrl stays null. */
+  previewer?: Previewer;
 }
 
 /**
@@ -55,6 +58,8 @@ export class Figures implements FigureService {
   private readonly options: FigureOptions;
   private readonly running = new Map<string, AbortController>();
   private readonly updates = new EventEmitter();
+  /** Previews are drawn one at a time; each is a browser process. */
+  private previewQueue: Promise<void> = Promise.resolve();
 
   constructor(deps: Deps, options: FigureOptions) {
     this.deps = deps;
@@ -63,6 +68,11 @@ export class Figures implements FigureService {
     mkdirSync(options.pagesDir, { recursive: true });
     // Jobs a restart cut off go back to the queue; OpenCode resumes their session.
     deps.db.prepare("UPDATE figures SET status = 'queued', message = 'Waiting for a free worker.' WHERE status = 'running'").run();
+    // Figures finished before previews existed, or whose preview failed, get one now.
+    if (options.previewer) {
+      const shas = deps.db.prepare("SELECT DISTINCT dark_sha FROM figures WHERE status = 'succeeded' AND dark_sha IS NOT NULL").all() as { dark_sha: string }[];
+      for (const { dark_sha } of shas) if (!existsSync(this.previewFile(dark_sha))) this.makePreview(dark_sha);
+    }
   }
 
   // --- jobs ---
@@ -130,7 +140,10 @@ export class Figures implements FigureService {
   private dropUnusedPages(shas: (string | null)[]) {
     for (const sha of new Set(shas.filter((s): s is string => !!s))) {
       const used = this.deps.db.prepare("SELECT 1 FROM figures WHERE dark_sha = ? OR light_sha = ? LIMIT 1").get(sha, sha);
-      if (!used) rmSync(this.pageFile(sha), { force: true });
+      if (!used) {
+        rmSync(this.pageFile(sha), { force: true });
+        rmSync(this.previewFile(sha), { force: true });
+      }
     }
   }
 
@@ -216,6 +229,7 @@ export class Figures implements FigureService {
           title: result.title, summary: result.summary, finished_at: this.deps.now(),
           dark_sha: dark.sha, dark_bytes: dark.bytes, light_sha: light.sha, light_bytes: light.bytes,
         });
+        this.makePreview(dark.sha);
       } catch (e) {
         if (abort.signal.aborted) return;
         this.deps.log(`figure ${f.id} failed: ${(e as Error)?.message ?? e}`);
@@ -253,18 +267,52 @@ export class Figures implements FigureService {
     return join(this.options.pagesDir, `${sha}.html`);
   }
 
-  pageUrl(sha: string, expires: number) {
-    const sig = createHmac("sha256", this.deps.config.signingSecret).update(`page:${sha}:${expires}`).digest("base64url");
-    return `${this.deps.config.publicUrl}/v1/pages/${sha}.html?exp=${expires}&sig=${sig}`;
+  /** The preview of the page with this hash (the dark page's). */
+  private previewFile(sha: string) {
+    return join(this.options.pagesDir, `${sha}.png`);
   }
 
-  readPage(sha: string, expires: number, sig: string): Buffer | null {
-    if (!/^[0-9a-f]{64}$/.test(sha) || !(expires > this.deps.now())) return null;
-    const expected = createHmac("sha256", this.deps.config.signingSecret).update(`page:${sha}:${expires}`).digest();
+  /** Draws the preview in the background, then tells everyone showing a figure with that page. */
+  private makePreview(sha: string) {
+    const previewer = this.options.previewer;
+    if (!previewer) return;
+    this.previewQueue = this.previewQueue.then(async () => {
+      const out = this.previewFile(sha);
+      if (existsSync(out) || !existsSync(this.pageFile(sha))) return;
+      try {
+        await previewer.render(this.pageFile(sha), `${out}.part.png`);
+        renameSync(`${out}.part.png`, out);
+      } catch (e) {
+        rmSync(`${out}.part.png`, { force: true });
+        this.deps.log(`preview of ${sha.slice(0, 12)} failed: ${(e as Error)?.message ?? e}`);
+        return;
+      }
+      const ids = this.deps.db.prepare("SELECT id FROM figures WHERE dark_sha = ?").all(sha) as { id: string }[];
+      for (const { id } of ids) this.update(id, {});
+    });
+  }
+
+  /** Waits for previews already asked for (tests). */
+  previewsSettled() {
+    return this.previewQueue;
+  }
+
+  private sign(file: string, expires: number) {
+    return createHmac("sha256", this.deps.config.signingSecret).update(`page:${file}:${expires}`).digest();
+  }
+
+  /** [file] is "<sha>.html" for a page or "<sha>.png" for a preview. */
+  fileUrl(file: string, expires: number) {
+    return `${this.deps.config.publicUrl}/v1/pages/${file}?exp=${expires}&sig=${this.sign(file, expires).toString("base64url")}`;
+  }
+
+  readFile(file: string, expires: number, sig: string): Buffer | null {
+    if (!/^[0-9a-f]{64}\.(html|png)$/.test(file) || !(expires > this.deps.now())) return null;
+    const expected = this.sign(file, expires);
     const given = Buffer.from(sig, "base64url");
     if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
-    const file = this.pageFile(sha);
-    return existsSync(file) ? readFileSync(file) : null;
+    const path = join(this.options.pagesDir, file);
+    return existsSync(path) ? readFileSync(path) : null;
   }
 
   // --- JSON ---
@@ -273,7 +321,7 @@ export class Figures implements FigureService {
     const position = f.status === "queued" ? queue.findIndex((q) => q.id === f.id) + 1 : 0;
     const expires = this.deps.now() + PAGE_URL_TTL_MS;
     const page = (sha: string | null, bytes: number | null) =>
-      sha ? { url: this.pageUrl(sha, expires), sha256: sha, bytes, expiresAt: iso(expires) } : null;
+      sha ? { url: this.fileUrl(`${sha}.html`, expires), sha256: sha, bytes, expiresAt: iso(expires) } : null;
     const succeeded = f.status === "succeeded";
     return {
       id: f.id,
@@ -293,7 +341,7 @@ export class Figures implements FigureService {
       finishedAt: iso(f.finished_at),
       error: f.error_json ? JSON.parse(f.error_json) : null,
       pages: succeeded ? { dark: page(f.dark_sha, f.dark_bytes), light: page(f.light_sha, f.light_bytes) } : null,
-      previewUrl: null,
+      previewUrl: succeeded && f.dark_sha && existsSync(this.previewFile(f.dark_sha)) ? this.fileUrl(`${f.dark_sha}.png`, expires) : null,
     };
   }
 
@@ -387,7 +435,7 @@ export function figureRoutes(app: FastifyInstance, deps: Deps, figures: Figures)
       if (!current) return close();
       const json = figures.toJson(current);
       // Signed URLs change every call; compare without them to skip repeats.
-      const body = JSON.stringify({ ...json, pages: json.pages && Object.keys(json.pages), estimatedStartAt: json.estimatedStartAt?.slice(0, 16) });
+      const body = JSON.stringify({ ...json, pages: json.pages && Object.keys(json.pages), previewUrl: !!json.previewUrl, estimatedStartAt: json.estimatedStartAt?.slice(0, 16) });
       if (body !== lastBody) {
         lastBody = body;
         res.write(`id: ${++seq}\nevent: figure.update\ndata: ${JSON.stringify({ figure: json })}\n\n`);
@@ -408,17 +456,20 @@ export function figureRoutes(app: FastifyInstance, deps: Deps, figures: Figures)
   });
 }
 
-/** Signed page downloads; no session needed, the signature is the permission. */
+/** Signed page and preview downloads; no session needed, the signature is the permission. */
 export function pageRoutes(app: FastifyInstance, figures: Figures) {
   app.get("/pages/:file", async (request, reply) => {
     const file = (request.params as { file: string }).file;
     const q = (request.query ?? {}) as { exp?: string; sig?: string };
-    const html = figures.readPage(file.replace(/\.html$/, ""), Number(q.exp), q.sig ?? "");
-    if (!html) throw notFound("This page");
+    const body = figures.readFile(file, Number(q.exp), q.sig ?? "");
+    if (!body) throw notFound("This page");
+    if (file.endsWith(".png")) {
+      return reply.header("Content-Type", "image/png").header("Cache-Control", "private, max-age=3600").send(body);
+    }
     return reply
       .header("Content-Type", "text/html; charset=utf-8")
       .header("Cache-Control", "private, max-age=3600")
       .header("Content-Security-Policy", "sandbox allow-scripts")
-      .send(html);
+      .send(body);
   });
 }

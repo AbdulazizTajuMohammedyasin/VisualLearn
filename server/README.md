@@ -60,6 +60,8 @@ VL_OPENCODE_BIN=$(which opencode) npm run test:opencode   # the real OpenCode ag
 | `VL_ANATOMY_DIR` | empty | A checkout of [Anatomy](https://github.com/wheresryan22/anatomy). Real figure models need it. |
 | `VL_OPENCODE_BIN` | `opencode` | The OpenCode executable (`npm i -g opencode-ai`). |
 | `VL_FIGURE_TIMEOUT_MIN` | `120` | A figure job is stopped after this long. |
+| `VL_CHROME_BIN` | `CHROME_PATH` | Chrome or Chromium that draws each finished figure's preview image. Empty: no previews. |
+| `VL_CHROME_NO_SANDBOX` | empty | `1` runs Chrome without its sandbox, which most containers need. The image sets it. |
 | `VL_UI_PROMPT` | `../ui-library/dist/system-prompt.md` | The OpenUI prompt from `npm run prompt`. |
 | `VL_MIN_UI_LIBRARY` | `1.0.0` | Apps reporting an older UI library get `426`. |
 | `VL_RATE_AUTH_PER_MIN`, `VL_RATE_REQUESTS_PER_MIN`, `VL_RATE_WORK_PER_MIN` | `30`, `600`, `30` | Abuse limits: sign-in calls per IP, requests per user, and new messages or figures per user. |
@@ -82,7 +84,8 @@ Local models use `"kind":"local","npm":"@ai-sdk/openai-compatible","baseUrl":"ht
 1. The job waits in a queue ordered round-robin across users: the least recently served person goes next.
 2. A worker creates a work folder `data/jobs/<id>/` and runs OpenCode with its home in `data/opencode/`, isolated from the machine's own OpenCode setup. That home holds the generated `opencode.json`, the Anatomy skill, and two custom tools: `report_progress` streams stages to the app and `finish` delivers the dark and light pages. OpenCode installs the tools' packages there once.
 3. Pages are stored by sha256 under `data/pages/` and served at `/v1/pages/<sha>.html` through links signed for one hour.
-4. A retry resumes the saved OpenCode session. Jobs cut off by a restart go back to the queue.
+4. Headless Chrome screenshots the dark page, with no network, into `data/pages/<sha>.png`; it is the figure's `previewUrl`. Figures finished without a preview get one at the next start.
+5. A retry resumes the saved OpenCode session. Jobs cut off by a restart go back to the queue.
 
 ## Before production
 

@@ -32,6 +32,7 @@ ENV NODE_ENV=production \
     VL_ANATOMY_DIR=/opt/anatomy \
     VL_UI_PROMPT=/app/ui-library/dist/system-prompt.md \
     CHROME_PATH=/usr/bin/chromium \
+    VL_CHROME_NO_SANDBOX=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
 RUN mkdir -p /data && chown node:node /data

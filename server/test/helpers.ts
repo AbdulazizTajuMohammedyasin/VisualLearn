@@ -9,6 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Figures } from "../src/figures.ts";
+import type { Previewer } from "../src/previews.ts";
 import { DevRunner, type FigureRunner } from "../src/runners.ts";
 
 export interface TestServer {
@@ -23,7 +24,7 @@ export interface TestServer {
 export async function testServer(
   env: Record<string, string> = {},
   google: GoogleVerifier | null = null,
-  figures: { workers?: number; runner?: FigureRunner } = {},
+  figures: { workers?: number; runner?: FigureRunner; previewer?: Previewer } = {},
 ): Promise<TestServer> {
   const clock = { now: Date.parse("2026-11-01T12:00:00Z") };
   const mail = new Map<string, string>();
@@ -45,6 +46,7 @@ export async function testServer(
     workers: figures.workers ?? 1,
     runner: figures.runner ?? new DevRunner(2),
     pagesDir: mkdtempSync(join(tmpdir(), "vl-pages-")),
+    previewer: figures.previewer,
   });
   const app = await buildApp(deps, { env: { VL_RATE_AUTH_PER_MIN: "1000", ...env } });
   return { app, deps, clock, mail };
