@@ -18,9 +18,24 @@ android {
         }
     }
 
+    // Release signing comes from the environment so no secrets live in the repo:
+    // VL_KEYSTORE (path), VL_KEYSTORE_PASSWORD, VL_KEY_ALIAS, VL_KEY_PASSWORD.
+    val keystore = System.getenv("VL_KEYSTORE")?.let(::file)?.takeIf { it.exists() }
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = keystore
+                storePassword = System.getenv("VL_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("VL_KEY_ALIAS")
+                keyPassword = System.getenv("VL_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
 
