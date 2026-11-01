@@ -214,14 +214,18 @@ Replies can include interactive UI written in OpenUI Lang (github.com/thesysdev/
 
 | Component | What it does |
 |---|---|
-| `Flashcards` | A deck of cards; tap to flip, mark "knew it" or "again". |
+| `Lesson` | The root: a column of blocks. |
+| `Quiz` | Several `MultipleChoice` questions, a score, and "Explain my mistakes" (sends a `uiAction` named `review_mistakes`). |
 | `MultipleChoice` | One question with instant feedback and an explanation. |
-| `Quiz` | Several questions, a score, and "review mistakes" (sends a `uiAction`). |
-| `StepExplainer` | Steps of an explanation, one at a time. |
-| `Figure` | A reference to a figure job; the app shows its card. |
-| Built-ins | Selected OpenUI components: Steps, Tabs, Accordion, Callout, CodeBlock, Table, Charts. |
+| `Flashcards` / `Card` | A deck: tap to flip, mark "knew it" or "again"; missed cards come back in another round. |
+| `StepExplainer` / `Step` | A process, one step at a time with back and next. |
+| `Figure` | A reference to a figure job; "Open figure" opens it in the app. |
+| `Callout` | A key idea, tip or warning. |
+| `Text` | A short paragraph between blocks. |
 
-The library is one versioned package shared by the server (which builds the model's system prompt from it with `@openuidev/lang-core`) and the app (whose bundled renderer registers the same components). The app sends `X-UI-Library-Version`; the server only emits programs the app can render, or answers `426` if the app is too old.
+OpenUI's own component set (`@openuidev/react-ui`: tables, charts, tabs) is not in library 1.0.0; adding it is a library version bump.
+
+The library is one versioned package, `ui-library/` in the app repo, shared by the server and the app. `npm run prompt` writes the system prompt section the server gives the chat model (`dist/system-prompt.md`); `npm run build` writes the app's offline renderer page. Answers and card positions are kept on the phone per message part. The app sends `X-UI-Library-Version`; the server only emits programs the app can render, or answers `426` if the app is too old.
 
 Interactions such as answering a quiz run entirely in the app. Only `@ToAssistant` actions reach the server, as a `uiAction` on the next message.
 
