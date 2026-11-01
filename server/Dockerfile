@@ -28,17 +28,15 @@ COPY server server
 
 ENV NODE_ENV=production \
     PORT=8080 \
-    VL_DATA_DIR=/app/server/data \
+    VL_DATA_DIR=/data \
     VL_ANATOMY_DIR=/opt/anatomy \
     VL_UI_PROMPT=/app/ui-library/dist/system-prompt.md \
     CHROME_PATH=/usr/bin/chromium \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# Data stays below /app/server: figure jobs' OpenCode tools resolve @opencode-ai/plugin
-# by walking up from their folder to /app/server/node_modules.
-RUN mkdir -p /app/server/data && chown node:node /app/server/data
+RUN mkdir -p /data && chown node:node /data
 USER node
 WORKDIR /app/server
-VOLUME ["/app/server/data"]
+VOLUME ["/data"]
 EXPOSE 8080
 CMD ["node", "--disable-warning=ExperimentalWarning", "src/main.ts"]

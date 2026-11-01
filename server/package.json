@@ -12,6 +12,7 @@
     "start": "node --disable-warning=ExperimentalWarning src/main.ts",
     "dev": "node --disable-warning=ExperimentalWarning --watch src/main.ts",
     "test": "node --disable-warning=ExperimentalWarning --test test/*.test.ts",
+    "test:opencode": "node --disable-warning=ExperimentalWarning --test test/opencode.integration.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

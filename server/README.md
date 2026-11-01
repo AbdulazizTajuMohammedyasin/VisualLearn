@@ -29,7 +29,7 @@ Debug builds may use plain HTTP to `10.0.2.2` and `localhost`; release builds ne
 
 ```sh
 docker build -f server/Dockerfile -t visuallearn-server .
-docker run -p 8080:8080 -v visuallearn-data:/app/server/data \
+docker run -p 8080:8080 -v visuallearn-data:/data \
   -e VL_SIGNING_SECRET=… -e VL_PUBLIC_URL=https://api.example.com -e VL_SMTP_URL=… visuallearn-server
 ```
 
@@ -40,6 +40,7 @@ The image hasn't been built yet: no Docker on the development machine. Expect to
 ```sh
 npm test         # node:test, in-memory database
 npm run typecheck
+VL_OPENCODE_BIN=$(which opencode) npm run test:opencode   # the real OpenCode against a scripted mock model
 ```
 
 ## Configuration
@@ -79,7 +80,7 @@ Local models use `"kind":"local","npm":"@ai-sdk/openai-compatible","baseUrl":"ht
 ## How a figure job runs
 
 1. The job waits in a queue ordered round-robin across users: the least recently served person goes next.
-2. A worker creates `data/jobs/<id>/` holding its own OpenCode config (`XDG_CONFIG_HOME`), the Anatomy skill, and two custom tools. `report_progress` streams stages to the app and `finish` delivers the dark and light pages.
+2. A worker creates a work folder `data/jobs/<id>/` and runs OpenCode with its home in `data/opencode/`, isolated from the machine's own OpenCode setup. That home holds the generated `opencode.json`, the Anatomy skill, and two custom tools: `report_progress` streams stages to the app and `finish` delivers the dark and light pages. OpenCode installs the tools' packages there once.
 3. Pages are stored by sha256 under `data/pages/` and served at `/v1/pages/<sha>.html` through links signed for one hour.
 4. A retry resumes the saved OpenCode session. Jobs cut off by a restart go back to the queue.
 

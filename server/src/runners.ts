@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModelRegistry } from "./models.ts";
@@ -84,13 +84,19 @@ export interface OpenCodeOptions {
   bin: string;
   /** A checkout of the Anatomy skill (github.com/wheresryan22/anatomy, pinned to a commit). */
   anatomyDir: string;
-  /** Where per-job folders go. Must sit under this server's folder so tools resolve @opencode-ai/plugin. */
+  /** Where per-job folders go (work, progress, result, pages). */
   jobsDir: string;
+  /**
+   * OpenCode's own home, shared by all jobs: config (tools, skill, opencode.json) plus data,
+   * state and cache. Sharing it means OpenCode installs its plugin packages once, sessions
+   * survive for retries, and the machine user's own OpenCode setup is never touched.
+   */
+  homeDir: string;
   timeoutMs: number;
 }
 
 /**
- * Runs Anatomy with OpenCode, one isolated config and work folder per job (section 11).
+ * Runs Anatomy with OpenCode: a shared OpenCode home, and a work folder per job (section 11).
  * The model comes from the admin's figure routing; its fallback is tried when the
  * primary fails before reporting any progress.
  */
@@ -121,21 +127,24 @@ export class OpenCodeRunner implements FigureRunner {
 
   private async attempt(job: FigureJob, model: string, hooks: RunHooks): Promise<FigureResult> {
     const dir = join(this.options.jobsDir, job.id);
-    const config = join(dir, "config", "opencode");
     const work = join(dir, "work");
     const out = join(dir, "out");
-    for (const d of [join(config, "tools"), work, out]) mkdirSync(d, { recursive: true });
+    for (const d of [work, out]) mkdirSync(d, { recursive: true });
     rmSync(join(dir, "result.json"), { force: true });
     rmSync(join(dir, "progress.jsonl"), { force: true });
 
+    const home = this.options.homeDir;
+    const config = join(home, "config", "opencode");
+    mkdirSync(join(config, "tools"), { recursive: true });
     const skill = join(config, "skills", "anatomy");
     if (!existsSync(skill)) cpSync(this.options.anatomyDir, skill, { recursive: true, filter: (p) => !/[\\/]\.git([\\/]|$)/.test(p) });
-    writeFileSync(join(config, "tools", "report_progress.ts"), REPORT_PROGRESS_TOOL);
-    writeFileSync(join(config, "tools", "finish.ts"), FINISH_TOOL);
+    writeIfChanged(join(config, "tools", "report_progress.ts"), REPORT_PROGRESS_TOOL);
+    writeIfChanged(join(config, "tools", "finish.ts"), FINISH_TOOL);
     const { json, env } = openCodeConfig(this.models, model);
-    writeFileSync(join(config, "opencode.json"), JSON.stringify(json, null, 2));
+    writeIfChanged(join(config, "opencode.json"), JSON.stringify(json, null, 2));
 
-    const args = ["run", "--format", "json", "--auto", "--model", model];
+    // --dir pins the project to the work folder; otherwise OpenCode looks upward for one.
+    const args = ["run", "--format", "json", "--auto", "--dir", work, "--model", model];
     if (job.sessionId) args.push("--session", job.sessionId, "Continue where you stopped. Finish the figure and call finish.");
     else args.push(figureTask(job));
 
@@ -143,12 +152,20 @@ export class OpenCodeRunner implements FigureRunner {
       cwd: work,
       // stdin closed, or `opencode run` waits for input.
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, ...env, XDG_CONFIG_HOME: join(dir, "config"), VL_JOB_DIR: dir },
-      shell: process.platform === "win32",
+      env: {
+        ...process.env,
+        ...env,
+        XDG_CONFIG_HOME: join(home, "config"),
+        XDG_DATA_HOME: join(home, "data"),
+        XDG_STATE_HOME: join(home, "state"),
+        XDG_CACHE_HOME: join(home, "cache"),
+        VL_JOB_DIR: dir,
+        VL_WORK_DIR: work,
+      },
     });
 
     let progressSeen = 0;
-    const poll = setInterval(() => {
+    const readProgress = () => {
       const file = join(dir, "progress.jsonl");
       if (!existsSync(file)) return;
       const lines = readFileSync(file, "utf8").split("\n").filter(Boolean);
@@ -157,7 +174,8 @@ export class OpenCodeRunner implements FigureRunner {
         if (STAGES.includes(stage)) hooks.progress(stage, String(message).slice(0, 300));
       }
       progressSeen = lines.length;
-    }, 1000);
+    };
+    const poll = setInterval(readProgress, 1000);
 
     let stdout = "";
     child.stdout.on("data", (chunk: Buffer) => {
@@ -178,6 +196,7 @@ export class OpenCodeRunner implements FigureRunner {
     const code = await new Promise<number | null>((resolve) => child.on("close", resolve));
     clearTimeout(timeout);
     clearInterval(poll);
+    readProgress(); // whatever was reported after the last poll
     hooks.signal.removeEventListener("abort", kill);
     if (hooks.signal.aborted) throw hooks.signal.reason;
 
@@ -191,6 +210,12 @@ export class OpenCodeRunner implements FigureRunner {
       light: readFileSync(join(out, "light.html")),
     };
   }
+}
+
+function writeIfChanged(file: string, content: string) {
+  if (existsSync(file) && readFileSync(file, "utf8") === content) return;
+  writeFileSync(`${file}.tmp`, content);
+  renameSync(`${file}.tmp`, file);
 }
 
 /** The opencode.json for one job, and the environment that carries its API key. */
@@ -258,9 +283,9 @@ export default tool({
     dark_page: tool.schema.string().describe("Path of the built dark-theme standalone HTML page"),
     light_page: tool.schema.string().describe("Path of the built light-theme standalone HTML page"),
   },
-  async execute(args, context) {
+  async execute(args) {
     const dir = process.env.VL_JOB_DIR!;
-    const resolve = (p: string) => (isAbsolute(p) ? p : join(context.directory, p));
+    const resolve = (p: string) => (isAbsolute(p) ? p : join(process.env.VL_WORK_DIR!, p));
     copyFileSync(resolve(args.dark_page), join(dir, "out", "dark.html"));
     copyFileSync(resolve(args.light_page), join(dir, "out", "light.html"));
     writeFileSync(join(dir, "result.json"), JSON.stringify({ title: args.title, summary: args.summary }));

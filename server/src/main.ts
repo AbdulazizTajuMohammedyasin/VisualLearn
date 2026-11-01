@@ -14,7 +14,7 @@ const config = loadConfig();
 const db = openDb(join(config.dataDir, "visuallearn.db"));
 const models = new ModelRegistry(db);
 const openCode = config.anatomyDir
-  ? new OpenCodeRunner({ bin: config.openCodeBin, anatomyDir: config.anatomyDir, jobsDir: join(config.dataDir, "jobs"), timeoutMs: config.figureTimeoutMs }, models)
+  ? new OpenCodeRunner({ bin: config.openCodeBin, anatomyDir: config.anatomyDir, jobsDir: join(config.dataDir, "jobs"), homeDir: join(config.dataDir, "opencode"), timeoutMs: config.figureTimeoutMs }, models)
   : null;
 const runner = new RoutedRunner(models, new DevRunner(config.devFigureStageMs), openCode);
 
