@@ -69,6 +69,10 @@ export class ChatEngine {
     }
   }
 
+  activeCount() {
+    return this.live.size;
+  }
+
   isLive(messageId: string) {
     return this.live.has(messageId);
   }

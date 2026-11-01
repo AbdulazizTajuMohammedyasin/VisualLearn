@@ -105,6 +105,15 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX figures_by_user ON figures (user_id, created_at);
    CREATE INDEX figures_by_status ON figures (status, queued_at);`,
+  // 4: admin audit log
+  `CREATE TABLE audit_log (
+     id INTEGER PRIMARY KEY,
+     admin_id TEXT NOT NULL,
+     method TEXT NOT NULL,
+     path TEXT NOT NULL,
+     status INTEGER NOT NULL,
+     at INTEGER NOT NULL
+   );`,
 ];
 
 /** Opens (or creates) the database and brings its schema up to date. */
