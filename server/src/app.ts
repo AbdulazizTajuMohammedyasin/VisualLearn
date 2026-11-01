@@ -1,14 +1,23 @@
 import Fastify, { type FastifyInstance } from "fastify";
+import { authRoutes, publicUser, requireUser, type GoogleVerifier, type Mailer } from "./auth.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import { compareVersions } from "./util.ts";
+
+/** Deletes an account and everything it owns (section 3, required by Google Play). */
+export function deleteUser(deps: Deps, userId: string) {
+  // Rows owned by the user go with it through ON DELETE CASCADE.
+  deps.db.prepare("DELETE FROM users WHERE id = ?").run(userId);
+}
 
 export interface Deps {
   config: Config;
   db: Db;
   /** Current time; tests replace it. */
   now: () => number;
+  mailer: Mailer;
+  google: GoogleVerifier | null;
 }
 
 /** Builds the HTTP app. Every route lives under /v1 (section 2). */
@@ -42,6 +51,20 @@ export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): 
       });
 
       v1.get("/health", async () => ({ ok: true }));
+
+      v1.register(async (auth) => authRoutes(auth, deps, deps));
+
+      // Everything below needs a signed-in user.
+      v1.register(async (authed) => {
+        requireUser(authed, deps);
+
+        authed.get("/me", async (request) => ({ user: publicUser(request.user) }));
+
+        authed.delete("/me", async (request, reply) => {
+          deleteUser(deps, request.user.id);
+          return reply.code(202).send();
+        });
+      });
     },
     { prefix: "/v1" },
   );
