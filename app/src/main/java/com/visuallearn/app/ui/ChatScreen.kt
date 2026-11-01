@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -39,6 +41,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
@@ -55,7 +58,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -66,83 +68,56 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.visuallearn.app.chat.ChatController
-import com.visuallearn.app.chat.ChatMessage
-import com.visuallearn.app.chat.ChatStore
-import com.visuallearn.app.chat.Role
-import com.visuallearn.app.jobs.FigureJobs
+import com.visuallearn.app.api.Message
+import com.visuallearn.app.api.MessageStatus
+import com.visuallearn.app.api.Part
+import com.visuallearn.app.api.Role
+import com.visuallearn.app.api.SendMode
+import com.visuallearn.app.chat.ChatRepository
+import com.visuallearn.app.figures.FiguresRepository
 import kotlinx.coroutines.launch
 
 private val SUGGESTIONS = listOf(
     "How does a pin tumbler lock open?",
     "Show me how a token bucket rate limiter works",
-    "Why does a mechanical watch tick?",
+    "Quiz me on how zippers work",
     "Explain how a CDN edge cache decides hit or miss",
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
-    chat: ChatController,
-    store: ChatStore,
-    jobs: FigureJobs,
-    hasApiKey: Boolean,
+    chat: ChatRepository,
+    figures: FiguresRepository,
     onOpenFigure: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenExplore: (() -> Unit)?,
+    onOpenExplore: () -> Unit,
     onOpenFigures: () -> Unit,
 ) {
     val state by chat.state.collectAsStateWithLifecycle()
-    val summaries by store.summaries.collectAsStateWithLifecycle()
-    val jobMap by jobs.jobs.collectAsStateWithLifecycle()
+    val summaries by chat.summaries.collectAsStateWithLifecycle()
+    val figureMap by figures.figures.collectAsStateWithLifecycle()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
+    fun closeDrawer() = scope.launch { drawer.close() }
 
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
             ModalDrawerSheet(Modifier.widthIn(max = 320.dp)) {
-                Text(
-                    "VisualLearn",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.padding(start = 24.dp, top = 20.dp, bottom = 12.dp),
-                )
-                NavigationDrawerItem(
-                    label = { Text("New chat") },
-                    icon = { Icon(Icons.Filled.Add, null) },
-                    selected = false,
-                    onClick = { chat.newChat(); scope.launch { drawer.close() } },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
-                onOpenExplore?.let { open ->
-                    NavigationDrawerItem(
-                        label = { Text("Explore figures") },
-                        icon = { Icon(Icons.Filled.Search, null) },
-                        selected = false,
-                        onClick = { scope.launch { drawer.close() }; open() },
-                        modifier = Modifier.padding(horizontal = 12.dp),
-                    )
-                }
-                NavigationDrawerItem(
-                    label = { Text("My figures") },
-                    icon = { Icon(Icons.Filled.Star, null) },
-                    selected = false,
-                    onClick = { scope.launch { drawer.close() }; onOpenFigures() },
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                )
+                Text("VisualLearn", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 24.dp, top = 20.dp, bottom = 12.dp))
+                DrawerItem("New chat", Icons.Filled.Add) { chat.newChat(); closeDrawer() }
+                DrawerItem("Explore figures", Icons.Filled.Search) { closeDrawer(); onOpenExplore() }
+                DrawerItem("My figures", Icons.Filled.Star) { closeDrawer(); onOpenFigures() }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 24.dp))
-                Text(
-                    "Chats",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 28.dp, bottom = 4.dp),
-                )
+                Text("Chats", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 28.dp, bottom = 4.dp))
                 LazyColumn(Modifier.weight(1f)) {
                     items(summaries, key = { it.id }) { s ->
                         NavigationDrawerItem(
                             label = { Text(s.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            selected = s.id == state.conversation.id,
-                            onClick = { chat.open(s.id); scope.launch { drawer.close() } },
+                            selected = s.id == state.conversationId,
+                            onClick = { chat.open(s.id); closeDrawer() },
                             badge = {
                                 IconButton(onClick = { chat.delete(s.id) }, modifier = Modifier.size(32.dp)) {
                                     Icon(Icons.Filled.Delete, "Delete chat", Modifier.size(18.dp))
@@ -153,62 +128,42 @@ fun ChatScreen(
                     }
                 }
                 HorizontalDivider(Modifier.padding(horizontal = 24.dp))
-                NavigationDrawerItem(
-                    label = { Text("Settings") },
-                    icon = { Icon(Icons.Filled.Settings, null) },
-                    selected = false,
-                    onClick = { scope.launch { drawer.close() }; onOpenSettings() },
-                    modifier = Modifier.padding(12.dp),
-                )
+                DrawerItem("Settings", Icons.Filled.Settings, Modifier.padding(vertical = 12.dp)) { closeDrawer(); onOpenSettings() }
             }
         },
     ) {
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = {
-                        Text(
-                            if (state.conversation.messages.isEmpty()) "VisualLearn" else state.conversation.title,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    },
-                    navigationIcon = {
-                        IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Filled.Menu, "Menu") }
-                    },
-                    actions = {
-                        IconButton(onClick = chat::newChat) { Icon(Icons.Filled.Add, "New chat") }
-                    },
+                    title = { Text(state.title.ifBlank { "VisualLearn" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    navigationIcon = { IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Filled.Menu, "Menu") } },
+                    actions = { IconButton(onClick = chat::newChat) { Icon(Icons.Filled.Add, "New chat") } },
                 )
             },
         ) { padding ->
             Column(Modifier.padding(padding).fillMaxSize().imePadding()) {
-                val messages = state.conversation.messages
                 Box(Modifier.weight(1f)) {
-                    if (messages.isEmpty() && !state.isStreaming) {
-                        EmptyState(hasApiKey, onOpenSettings) { chat.send(it, figureMode = false) }
-                    } else {
-                        MessageList(
-                            messages = messages,
-                            streamingText = state.streamingText,
-                            pendingFigureId = state.pendingFigureId,
+                    when {
+                        state.loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        state.messages.isEmpty() -> EmptyState { chat.send(it, SendMode.AUTO) }
+                        else -> MessageList(
+                            messages = state.messages,
                             figureCard = { id ->
-                                jobMap[id]?.let { job ->
-                                    FigureCard(
-                                        job = job,
-                                        onOpen = { onOpenFigure(id) },
-                                        onCancel = { jobs.cancel(id) },
-                                        onResume = { jobs.resume(id) },
-                                    )
+                                figureMap[id]?.let { figure ->
+                                    FigureCard(figure, onOpen = { onOpenFigure(id) }, onCancel = { figures.cancel(id) }, onRetry = { figures.retry(id) })
                                 }
                             },
                             onRetry = chat::retry,
                         )
                     }
                 }
+                state.error?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
+                }
                 Composer(
                     streaming = state.isStreaming,
-                    onSend = chat::send,
+                    onSend = { text, figureMode -> chat.send(text, if (figureMode) SendMode.FIGURE else SendMode.AUTO) },
                     onStop = chat::stop,
                 )
             }
@@ -217,7 +172,18 @@ fun ChatScreen(
 }
 
 @Composable
-private fun EmptyState(hasApiKey: Boolean, onOpenSettings: () -> Unit, onSuggestion: (String) -> Unit) {
+private fun DrawerItem(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    NavigationDrawerItem(
+        label = { Text(label) },
+        icon = { Icon(icon, null) },
+        selected = false,
+        onClick = onClick,
+        modifier = modifier.padding(horizontal = 12.dp),
+    )
+}
+
+@Composable
+private fun EmptyState(onSuggestion: (String) -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
@@ -234,28 +200,18 @@ private fun EmptyState(hasApiKey: Boolean, onOpenSettings: () -> Unit, onSuggest
             textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(20.dp))
-        if (!hasApiKey) {
-            OutlinedButton(onClick = onOpenSettings) { Text("Add your Claude API key") }
-        } else {
-            SUGGESTIONS.forEach { s ->
-                AssistChip(onClick = { onSuggestion(s) }, label = { Text(s) }, modifier = Modifier.padding(vertical = 2.dp))
-            }
+        SUGGESTIONS.forEach { s ->
+            AssistChip(onClick = { onSuggestion(s) }, label = { Text(s) }, modifier = Modifier.padding(vertical = 2.dp))
         }
     }
 }
 
 @Composable
-private fun MessageList(
-    messages: List<ChatMessage>,
-    streamingText: String?,
-    pendingFigureId: String?,
-    figureCard: @Composable (String) -> Unit,
-    onRetry: () -> Unit,
-) {
+private fun MessageList(messages: List<Message>, figureCard: @Composable (String) -> Unit, onRetry: () -> Unit) {
     val listState = rememberLazyListState()
-    val itemCount = messages.size + if (streamingText != null) 1 else 0
-    LaunchedEffect(itemCount, streamingText?.length) {
-        if (itemCount > 0) listState.animateScrollToItem(itemCount - 1, Int.MAX_VALUE / 2)
+    val lastLength = messages.lastOrNull()?.parts?.sumOf { (it as? Part.Text)?.text?.length ?: 1 } ?: 0
+    LaunchedEffect(messages.size, lastLength) {
+        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex, Int.MAX_VALUE / 2)
     }
     LazyColumn(
         state = listState,
@@ -265,28 +221,45 @@ private fun MessageList(
     ) {
         items(messages, key = { it.id }) { m ->
             when (m.role) {
-                Role.USER -> UserBubble(m.text)
+                Role.USER -> UserBubble(m.parts.filterIsInstance<Part.Text>().joinToString("") { it.text })
                 Role.ASSISTANT -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (m.text.isNotBlank()) MarkdownText(m.text)
-                    m.figureJobId?.let { figureCard(it) }
-                    m.error?.let { error ->
+                    if (m.parts.isEmpty() && m.status == MessageStatus.STREAMING) TypingDots()
+                    m.parts.forEach { part ->
+                        when (part) {
+                            is Part.Text -> if (part.text.isNotBlank()) MarkdownText(part.text)
+                            is Part.Ui -> InteractivePartPlaceholder(part)
+                            is Part.Figure -> figureCard(part.figureId)
+                        }
+                    }
+                    if (m.status == MessageStatus.FAILED) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.weight(1f))
+                            Text(m.error?.message ?: "This reply didn't finish.", color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                             OutlinedButton(onClick = onRetry) { Text("Retry") }
                         }
                     }
                 }
             }
         }
-        if (streamingText != null) {
-            item(key = "streaming") {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (streamingText.isEmpty() && pendingFigureId == null) TypingDots()
-                    else if (streamingText.isNotEmpty()) MarkdownText(streamingText)
-                    pendingFigureId?.let { figureCard(it) }
-                }
-            }
+    }
+}
+
+/** Stand-in for OpenUI content until the interactive renderer lands. */
+@Composable
+private fun InteractivePartPlaceholder(part: Part.Ui) {
+    val components = Regex("""=\s*([A-Z][A-Za-z]+)\(""").findAll(part.program).map { it.groupValues[1] }.toList()
+    Card(
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text("Interactive: ${components.firstOrNull() ?: "content"}", style = MaterialTheme.typography.titleSmall)
+            Text(
+                "${components.size} components. The interactive renderer arrives with the OpenUI component library.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -319,10 +292,7 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
     var figureMode by rememberSaveable { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.background) {
         Column(Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Surface(
-                shape = RoundedCornerShape(26.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            ) {
+            Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                 Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
                     TextField(
                         value = text,
@@ -349,15 +319,9 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
                             FilledIconButton(onClick = onStop) { Icon(Icons.Filled.Close, "Stop") }
                         } else {
                             FilledIconButton(
-                                onClick = {
-                                    onSend(text, figureMode)
-                                    text = ""
-                                    figureMode = false
-                                },
+                                onClick = { onSend(text, figureMode); text = ""; figureMode = false },
                                 enabled = text.isNotBlank(),
-                                colors = IconButtonDefaults.filledIconButtonColors(
-                                    containerColor = MaterialTheme.colorScheme.primary,
-                                ),
+                                colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.primary),
                             ) { Icon(Icons.AutoMirrored.Filled.Send, "Send") }
                         }
                     }

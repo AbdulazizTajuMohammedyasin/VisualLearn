@@ -11,11 +11,10 @@ android {
         applicationId = "com.visuallearn.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
-        ndk {
-            abiFilters += listOf("armeabi-v7a", "arm64-v8a")
-        }
+        versionCode = 2
+        versionName = "0.2.0"
+        buildConfigField("String", "API_BASE_URL", "\"${providers.gradleProperty("visuallearn.apiBaseUrl").getOrElse("")}\"")
+        buildConfigField("String", "UI_LIBRARY_VERSION", "\"1.0.0\"")
     }
 
     // Release signing comes from the environment so no secrets live in the repo:
@@ -46,6 +45,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {
@@ -67,9 +67,7 @@ dependencies {
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    implementation(libs.commons.compress)
-    implementation(libs.xz)
-    implementation(libs.anthropic.java)
+    implementation(libs.okhttp)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.compose.material.icons.core)

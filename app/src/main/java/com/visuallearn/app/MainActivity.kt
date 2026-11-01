@@ -2,15 +2,14 @@ package com.visuallearn.app
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -20,22 +19,21 @@ import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.visuallearn.app.ui.ChatScreen
-import com.visuallearn.app.ui.EnvironmentScreen
 import com.visuallearn.app.ui.ExploreScreen
-import com.visuallearn.app.ui.GalleryFigureScreen
-import com.visuallearn.app.ui.LicensesScreen
 import com.visuallearn.app.ui.FigureScreen
 import com.visuallearn.app.ui.FiguresScreen
+import com.visuallearn.app.ui.GalleryFigureScreen
+import com.visuallearn.app.ui.LicensesScreen
 import com.visuallearn.app.ui.SettingsScreen
-import com.visuallearn.app.ui.SetupScreen
+import com.visuallearn.app.ui.SignInScreen
 import com.visuallearn.app.ui.StorageScreen
 import com.visuallearn.app.ui.VisualLearnTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
 
-    /** A figure job to open, from a notification tap. */
-    private val pendingJob = MutableStateFlow<String?>(null)
+    /** A figure to open, from a notification tap. */
+    private val pendingFigure = MutableStateFlow<String?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -51,7 +49,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             VisualLearnTheme {
-                AppNavigation(app, pendingJob)
+                AppNavigation(app, pendingFigure)
             }
         }
     }
@@ -62,37 +60,19 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        intent?.getStringExtra(EXTRA_JOB)?.let { pendingJob.value = it }
-        runDebugTask(intent)
-    }
-
-    /** Debug builds only: `adb shell am start -n com.visuallearn.app/.MainActivity --es task checks` */
-    private fun runDebugTask(intent: Intent?) {
-        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
-        val app = application as VisualLearnApp
-        val controller = app.envController
-        when (intent?.getStringExtra("task")) {
-            "install" -> controller.installRootfs()
-            "tools" -> controller.installTools()
-            "setup" -> controller.setUpEverything()
-            "checks" -> controller.runChecks()
-            "demo" -> controller.buildDemo()
-            "figure" -> intent.getStringExtra("prompt")?.let { app.figureJobs.create(it, "dark") }
-            "shell" -> intent.getStringExtra("cmd")?.let(controller::runDebugCommand)
-        }
+        intent?.getStringExtra(EXTRA_FIGURE)?.let { pendingFigure.value = it }
     }
 
     companion object {
-        const val EXTRA_JOB = "job"
+        const val EXTRA_FIGURE = "figure"
     }
 }
 
 private sealed interface Screen {
     data object Chat : Screen
-    data class Figure(val jobId: String) : Screen
+    data class Figure(val id: String) : Screen
     data object Figures : Screen
     data object Settings : Screen
-    data object Environment : Screen
     data object Explore : Screen
     data class GalleryFigure(val key: String) : Screen
     data object Storage : Screen
@@ -101,10 +81,9 @@ private sealed interface Screen {
 
 private fun Screen.encode(): String = when (this) {
     Screen.Chat -> "chat"
-    is Screen.Figure -> "figure:$jobId"
+    is Screen.Figure -> "figure:$id"
     Screen.Figures -> "figures"
     Screen.Settings -> "settings"
-    Screen.Environment -> "environment"
     Screen.Explore -> "explore"
     is Screen.GalleryFigure -> "gallery:$key"
     Screen.Storage -> "storage"
@@ -113,28 +92,37 @@ private fun Screen.encode(): String = when (this) {
 
 private fun decode(s: String): Screen = when {
     s.startsWith("figure:") -> Screen.Figure(s.removePrefix("figure:"))
+    s.startsWith("gallery:") -> Screen.GalleryFigure(s.removePrefix("gallery:"))
     s == "figures" -> Screen.Figures
     s == "settings" -> Screen.Settings
-    s == "environment" -> Screen.Environment
     s == "explore" -> Screen.Explore
     s == "storage" -> Screen.Storage
     s == "licenses" -> Screen.Licenses
-    s.startsWith("gallery:") -> Screen.GalleryFigure(s.removePrefix("gallery:"))
     else -> Screen.Chat
 }
 
 @Composable
-private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<String?>) {
+private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<String?>) {
+    val signedIn by app.tokens.signedIn.collectAsStateWithLifecycle()
+    if (!signedIn) {
+        SignInScreen(app.api)
+        return
+    }
+
     val stack = rememberSaveable(
         saver = listSaver(save = { list -> list.map { it.encode() } }, restore = { saved -> mutableStateListOf(*saved.map(::decode).toTypedArray()) }),
     ) { mutableStateListOf<Screen>(Screen.Chat) }
     fun push(screen: Screen) = stack.add(screen)
     fun pop() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
 
-    val openJob by pendingJob.collectAsStateWithLifecycle()
-    LaunchedEffect(openJob) {
-        openJob?.let { id ->
-            pendingJob.value = null
+    LaunchedEffect(Unit) {
+        app.chat.refreshList()
+        app.figures.refresh()
+    }
+    val openFigure by pendingFigure.collectAsStateWithLifecycle()
+    LaunchedEffect(openFigure) {
+        openFigure?.let { id ->
+            pendingFigure.value = null
             push(Screen.Figure(id))
         }
     }
@@ -142,40 +130,31 @@ private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<Stri
     val settingsState by app.settings.state.collectAsStateWithLifecycle()
     val darkFigures = settingsState.darkFigures ?: isSystemInDarkTheme()
 
-    val envState by app.envController.state.collectAsStateWithLifecycle()
-    if (!envState.toolsReady && !settingsState.setupSkipped) {
-        SetupScreen(app.envController, onSkip = { app.settings.setupSkipped = true })
-        return
-    }
-
     BackHandler(enabled = stack.size > 1) { pop() }
 
     when (val screen = stack.last()) {
         Screen.Chat -> ChatScreen(
             chat = app.chat,
-            store = app.chatStore,
-            jobs = app.figureJobs,
-            hasApiKey = settingsState.hasApiKey,
+            figures = app.figures,
             onOpenFigure = { push(Screen.Figure(it)) },
             onOpenSettings = { push(Screen.Settings) },
             onOpenExplore = { push(Screen.Explore) },
             onOpenFigures = { push(Screen.Figures) },
         )
-        is Screen.Figure -> FigureScreen(app.figureJobs, screen.jobId, darkFigures, onBack = ::pop)
-        Screen.Figures -> FiguresScreen(app.figureJobs, onOpen = { push(Screen.Figure(it)) }, onBack = ::pop)
+        is Screen.Figure -> FigureScreen(app.figures, screen.id, darkFigures, onBack = ::pop)
+        Screen.Figures -> FiguresScreen(app.figures, onOpen = { push(Screen.Figure(it)) }, onBack = ::pop)
         Screen.Settings -> SettingsScreen(
+            api = app.api,
             settings = app.settings,
             onBack = ::pop,
-            onOpenEnvironment = { push(Screen.Environment) },
             onOpenStorage = { push(Screen.Storage) },
             onOpenLicenses = { push(Screen.Licenses) },
         )
-        Screen.Environment -> EnvironmentScreen(app.envController, onBack = ::pop)
         Screen.Explore -> ExploreScreen(app.gallery, onOpen = { push(Screen.GalleryFigure(it.key)) }, onBack = ::pop)
         is Screen.GalleryFigure -> app.gallery.find(screen.key)
             ?.let { GalleryFigureScreen(app.gallery, it, onBack = ::pop) }
             ?: ExploreScreen(app.gallery, onOpen = { push(Screen.GalleryFigure(it.key)) }, onBack = ::pop)
-        Screen.Storage -> StorageScreen(app.envController, app.figureJobs, onBack = ::pop)
+        Screen.Storage -> StorageScreen(app.figures, onBack = ::pop)
         Screen.Licenses -> LicensesScreen(onBack = ::pop)
     }
 }

@@ -24,79 +24,66 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import com.visuallearn.app.jobs.FigureJob
-import com.visuallearn.app.jobs.JobState
-import java.util.Locale
-
-private val STAGES = listOf("research", "design", "parts", "geometry", "build", "motion", "verify", "polish")
+import com.visuallearn.app.api.Figure
+import com.visuallearn.app.api.FigureStatus
 
 @Composable
 fun FigureCard(
-    job: FigureJob,
+    figure: Figure,
     onOpen: () -> Unit,
     onCancel: () -> Unit,
-    onResume: () -> Unit,
+    onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Card(
-        onClick = { if (job.state == JobState.DONE) onOpen() },
+        onClick = { if (figure.status == FigureStatus.SUCCEEDED) onOpen() },
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "FIG",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.secondary,
-                )
+                Text("FIG", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    job.title ?: job.prompt,
+                    figure.title ?: figure.prompt,
                     style = MaterialTheme.typography.titleSmall,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f),
                 )
             }
-            when (job.state) {
-                JobState.QUEUED, JobState.RUNNING -> {
-                    val stageIndex = STAGES.indexOf(job.stage)
-                    if (stageIndex >= 0) {
-                        LinearProgressIndicator(
-                            progress = { (stageIndex + 1f) / (STAGES.size + 1) },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+            when (figure.status) {
+                FigureStatus.QUEUED, FigureStatus.RUNNING -> {
+                    val progress = figure.progress
+                    if (progress != null && progress > 0) {
+                        LinearProgressIndicator(progress = { progress.toFloat() }, modifier = Modifier.fillMaxWidth())
                     } else {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                     }
                     Text(
-                        job.message ?: "Working…",
+                        figure.message ?: "Working…",
                         style = MaterialTheme.typography.bodyMedium,
                         maxLines = 3,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Text(
-                        buildString {
-                            job.stage?.let { append(it.replaceFirstChar(Char::uppercase)); append(" · ") }
-                            append(formatElapsed(job.elapsedSec))
-                            if (job.costUsd > 0) append(" · ${formatCost(job.costUsd)}")
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            figure.stage?.replaceFirstChar(Char::uppercase) ?: "Queued",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
                         TextButton(onClick = onCancel) { Text("Cancel") }
                     }
                 }
-                JobState.DONE -> {
-                    job.summary?.takeIf { it.isNotBlank() }?.let {
+                FigureStatus.SUCCEEDED -> {
+                    figure.summary?.takeIf { it.isNotBlank() }?.let {
                         Text(it, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            if (job.costUsd > 0) "Ready · ${formatCost(job.costUsd)}" else "Ready",
+                            "Ready",
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
@@ -108,21 +95,18 @@ fun FigureCard(
                         }
                     }
                 }
-                JobState.FAILED, JobState.INTERRUPTED, JobState.CANCELLED -> {
+                FigureStatus.FAILED, FigureStatus.CANCELLED -> {
                     Text(
-                        when (job.state) {
-                            JobState.CANCELLED -> "Cancelled."
-                            else -> job.error ?: "Stopped before it finished."
-                        },
+                        if (figure.status == FigureStatus.CANCELLED) "Cancelled." else figure.error?.message ?: "This figure couldn't be finished.",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = if (job.state == JobState.FAILED) MaterialTheme.colorScheme.error
+                        color = if (figure.status == FigureStatus.FAILED) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = onResume) {
+                        TextButton(onClick = onRetry) {
                             Icon(Icons.Filled.Refresh, null, Modifier.size(18.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Resume")
+                            Text("Try again")
                         }
                     }
                 }
@@ -130,8 +114,3 @@ fun FigureCard(
         }
     }
 }
-
-fun formatElapsed(seconds: Int): String =
-    if (seconds < 60) "${seconds}s" else "${seconds / 60} min"
-
-fun formatCost(usd: Double): String = String.format(Locale.US, "$%.2f", usd)

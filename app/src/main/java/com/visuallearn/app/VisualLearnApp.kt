@@ -1,34 +1,46 @@
 package com.visuallearn.app
 
 import android.app.Application
-import com.visuallearn.app.chat.ChatController
-import com.visuallearn.app.chat.ChatStore
+import com.visuallearn.app.api.Backend
+import com.visuallearn.app.api.VisualLearnApi
+import com.visuallearn.app.auth.TokenStore
+import com.visuallearn.app.chat.ChatRepository
+import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.gallery.Gallery
-import com.visuallearn.app.jobs.FigureJobs
-import com.visuallearn.app.linux.EnvController
 import com.visuallearn.app.settings.Settings
+import java.io.File
+import kotlin.concurrent.thread
 
 class VisualLearnApp : Application() {
-    lateinit var envController: EnvController
+    lateinit var tokens: TokenStore
+        private set
+    lateinit var api: VisualLearnApi
         private set
     lateinit var settings: Settings
         private set
-    lateinit var figureJobs: FigureJobs
+    lateinit var figures: FiguresRepository
         private set
-    lateinit var chatStore: ChatStore
-        private set
-    lateinit var chat: ChatController
+    lateinit var chat: ChatRepository
         private set
     lateinit var gallery: Gallery
         private set
 
     override fun onCreate() {
         super.onCreate()
-        envController = EnvController(this)
+        tokens = TokenStore(this)
+        api = Backend.create(this, tokens)
         settings = Settings(this)
-        figureJobs = FigureJobs(this, envController, settings)
-        chatStore = ChatStore(this)
-        chat = ChatController(chatStore, figureJobs, settings)
+        figures = FiguresRepository(this, api)
+        chat = ChatRepository(api, figures)
         gallery = Gallery(this)
+        removeOnDeviceEnvironment()
+    }
+
+    /** Builds before the server pivot kept a ~1.4 GB Debian guest and local chats in app storage. */
+    private fun removeOnDeviceEnvironment() {
+        val leftovers = listOf(File(filesDir, "linux"), File(filesDir, "chats")).filter { it.exists() }
+        if (leftovers.isNotEmpty()) thread(name = "cleanup", priority = Thread.MIN_PRIORITY) {
+            leftovers.forEach { it.deleteRecursively() }
+        }
     }
 }
