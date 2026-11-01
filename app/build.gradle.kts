@@ -10,8 +10,7 @@ android {
     defaultConfig {
         applicationId = "com.visuallearn.app"
         minSdk = 26
-        // 28 keeps exec() of binaries inside the app's data dir allowed (Android W^X applies from 29).
-        targetSdk = 28
+        targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
         ndk {
@@ -36,13 +35,10 @@ android {
 
     packaging {
         jniLibs {
-            // proot must exist as a real file in nativeLibraryDir so it can be exec'd.
+            // proot must exist as a real file in nativeLibraryDir so it can be exec'd
+            // (apps targeting 29+ may not exec files from their data dir).
             useLegacyPackaging = true
         }
-    }
-
-    lint {
-        disable += "ExpiredTargetSdkVersion"
     }
 }
 

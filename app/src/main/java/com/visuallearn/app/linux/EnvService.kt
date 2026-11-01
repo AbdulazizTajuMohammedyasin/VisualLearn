@@ -6,7 +6,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.IBinder
+import androidx.core.app.ServiceCompat
 import com.visuallearn.app.MainActivity
 import com.visuallearn.app.R
 
@@ -28,7 +30,7 @@ class EnvService : Service() {
             .setContentIntent(open)
             .setOngoing(true)
             .build()
-        startForeground(NOTIFICATION_ID, notification)
+        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         return START_NOT_STICKY
     }
 
