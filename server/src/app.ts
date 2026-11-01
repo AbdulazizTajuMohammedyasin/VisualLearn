@@ -6,6 +6,7 @@ import type { Db } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import { figureRoutes, pageRoutes, type Figures } from "./figures.ts";
 import { syncRoutes } from "./sync.ts";
+import { rateLimits } from "./ratelimit.ts";
 import { adminRoutes } from "./admin.ts";
 import type { ModelRegistry } from "./models.ts";
 import { compareVersions } from "./util.ts";
@@ -42,9 +43,10 @@ export interface FigureService {
 }
 
 /** Builds the HTTP app. Every route lives under /v1 (section 2). */
-export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): Promise<FastifyInstance> {
+export async function buildApp(deps: Deps, options: { logger?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1_000_000 });
   const chat = new ChatEngine(deps);
+  const limits = rateLimits(deps.now, options.env);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ApiError) {
@@ -75,11 +77,19 @@ export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): 
       v1.get("/health", async () => ({ ok: true }));
       if (deps.figures) pageRoutes(v1, deps.figures);
 
-      v1.register(async (auth) => authRoutes(auth, deps, deps));
+      v1.register(async (auth) => {
+        auth.addHook("onRequest", async (request) => limits.auth.hit(`ip:${request.ip}`));
+        authRoutes(auth, deps, deps);
+      });
 
       // Everything below needs a signed-in user.
       v1.register(async (authed) => {
         requireUser(authed, deps);
+        authed.addHook("preHandler", async (request) => {
+          limits.requests.hit(request.user.id);
+          const url = request.routeOptions.url ?? "";
+          if (request.method === "POST" && (url === "/v1/figures" || url === "/v1/conversations/:id/messages")) limits.work.hit(request.user.id);
+        });
 
         authed.get("/me", async (request) => ({ user: publicUser(request.user) }));
 

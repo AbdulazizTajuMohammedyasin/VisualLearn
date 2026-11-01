@@ -46,7 +46,7 @@ export async function testServer(
     runner: figures.runner ?? new DevRunner(2),
     pagesDir: mkdtempSync(join(tmpdir(), "vl-pages-")),
   });
-  const app = await buildApp(deps);
+  const app = await buildApp(deps, { env: { VL_RATE_AUTH_PER_MIN: "1000", ...env } });
   return { app, deps, clock, mail };
 }
 
