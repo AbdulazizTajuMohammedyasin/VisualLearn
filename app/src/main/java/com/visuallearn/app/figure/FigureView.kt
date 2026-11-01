@@ -9,15 +9,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.AndroidView
 import java.io.ByteArrayInputStream
-import java.io.File
 
 /**
- * Shows a generated Anatomy figure. Figures are single self-contained HTML files,
- * so the page gets JavaScript but no file access, no network and no navigation.
+ * Shows an Anatomy figure. Figures are single self-contained HTML files, so the
+ * page gets JavaScript but no file access, no network and no navigation.
+ * [key] identifies the content; the page reloads only when it changes.
  */
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-fun FigureView(file: File, modifier: Modifier = Modifier) {
+fun FigureView(key: String, html: () -> String, modifier: Modifier = Modifier) {
     AndroidView(
         modifier = modifier,
         factory = { context ->
@@ -33,11 +33,12 @@ fun FigureView(file: File, modifier: Modifier = Modifier) {
             }
         },
         update = { webView ->
-            if (webView.tag != file.absolutePath) {
-                webView.tag = file.absolutePath
-                webView.loadDataWithBaseURL(BASE_URL, file.readText(), "text/html", "utf-8", null)
+            if (webView.tag != key) {
+                webView.tag = key
+                webView.loadDataWithBaseURL(BASE_URL, html(), "text/html", "utf-8", null)
             }
         },
+        onRelease = { it.destroy() },
     )
 }
 

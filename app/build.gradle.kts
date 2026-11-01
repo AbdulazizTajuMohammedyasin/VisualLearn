@@ -58,4 +58,6 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.commons.compress)
     implementation(libs.xz)
+    implementation(libs.anthropic.java)
+    implementation(libs.androidx.compose.material.icons.core)
 }

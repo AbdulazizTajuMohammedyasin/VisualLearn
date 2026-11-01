@@ -7,56 +7,45 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.visuallearn.app.figure.FigureView
-import com.visuallearn.app.linux.EnvController
-import java.io.File
+import com.visuallearn.app.ui.ChatScreen
+import com.visuallearn.app.ui.EnvironmentScreen
+import com.visuallearn.app.ui.FigureScreen
+import com.visuallearn.app.ui.FiguresScreen
+import com.visuallearn.app.ui.SettingsScreen
+import com.visuallearn.app.ui.VisualLearnTheme
+import kotlinx.coroutines.flow.MutableStateFlow
 
 class MainActivity : ComponentActivity() {
+
+    /** A figure job to open, from a notification tap. */
+    private val pendingJob = MutableStateFlow<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        val controller = (application as VisualLearnApp).envController
-        runDebugTask(intent)
+        val app = application as VisualLearnApp
+        handleIntent(intent)
         setContent {
-            MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                EnvScreen(controller)
+            VisualLearnTheme {
+                AppNavigation(app, pendingJob)
             }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        intent?.getStringExtra(EXTRA_JOB)?.let { pendingJob.value = it }
         runDebugTask(intent)
     }
 
@@ -80,61 +69,67 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun EnvScreen(controller: EnvController) {
-    val state by controller.state.collectAsStateWithLifecycle()
-    var openFigure by remember { mutableStateOf<File?>(null) }
+private sealed interface Screen {
+    data object Chat : Screen
+    data class Figure(val jobId: String) : Screen
+    data object Figures : Screen
+    data object Settings : Screen
+    data object Environment : Screen
+}
 
-    openFigure?.let { figure ->
-        BackHandler { openFigure = null }
-        Scaffold(topBar = { TopAppBar(title = { Text(figure.nameWithoutExtension) }) }) { padding ->
-            FigureView(figure, Modifier.padding(padding).fillMaxSize())
-        }
-        return
-    }
+private fun Screen.encode(): String = when (this) {
+    Screen.Chat -> "chat"
+    is Screen.Figure -> "figure:$jobId"
+    Screen.Figures -> "figures"
+    Screen.Settings -> "settings"
+    Screen.Environment -> "environment"
+}
 
-    Scaffold(topBar = { TopAppBar(title = { Text("VisualLearn · Linux environment") }) }) { padding ->
-        Column(Modifier.padding(padding).padding(horizontal = 12.dp).fillMaxSize()) {
-            val busy = state.runningTask != null
-            Text(
-                when {
-                    busy -> "Running: ${state.runningTask}…"
-                    state.lastResult != null -> state.lastResult!!
-                    state.installed -> "Debian installed"
-                    else -> "Debian not installed"
-                },
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = controller::installRootfs, enabled = !busy) { Text("1 · Install Debian") }
-                Button(onClick = controller::installTools, enabled = !busy && state.installed) { Text("2 · Install tools") }
-                Button(onClick = controller::runChecks, enabled = !busy && state.installed) { Text("3 · Checks") }
-                Button(onClick = controller::buildDemo, enabled = !busy && state.installed) { Text("4 · Build demo") }
-            }
-            if (state.figures.isNotEmpty()) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    state.figures.forEach { f ->
-                        OutlinedButton(onClick = { openFigure = f }) { Text("Open ${f.nameWithoutExtension}") }
-                    }
-                }
-            }
-            LogView(state.log, Modifier.padding(vertical = 8.dp).fillMaxWidth().weight(1f))
-        }
-    }
+private fun decode(s: String): Screen = when {
+    s.startsWith("figure:") -> Screen.Figure(s.removePrefix("figure:"))
+    s == "figures" -> Screen.Figures
+    s == "settings" -> Screen.Settings
+    s == "environment" -> Screen.Environment
+    else -> Screen.Chat
 }
 
 @Composable
-private fun LogView(lines: List<String>, modifier: Modifier) {
-    val listState = rememberLazyListState()
-    LaunchedEffect(lines.size) { if (lines.isNotEmpty()) listState.scrollToItem(lines.lastIndex) }
-    LazyColumn(
-        state = listState,
-        modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant).padding(6.dp),
-    ) {
-        items(lines) { line ->
-            Text(line, fontFamily = FontFamily.Monospace, fontSize = 11.sp, lineHeight = 13.sp)
-        }
+private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<String?>) {
+    val stack = rememberSaveable(
+        saver = listSaver(save = { list -> list.map { it.encode() } }, restore = { saved -> mutableStateListOf(*saved.map(::decode).toTypedArray()) }),
+    ) { mutableStateListOf<Screen>(Screen.Chat) }
+    fun push(screen: Screen) = stack.add(screen)
+    fun pop() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+
+    val openJob by pendingJob.collectAsStateWithLifecycle()
+    openJob?.let { id ->
+        pendingJob.value = null
+        push(Screen.Figure(id))
+    }
+
+    val settingsState by app.settings.state.collectAsStateWithLifecycle()
+    val darkFigures = settingsState.darkFigures ?: isSystemInDarkTheme()
+
+    BackHandler(enabled = stack.size > 1) { pop() }
+
+    when (val screen = stack.last()) {
+        Screen.Chat -> ChatScreen(
+            chat = app.chat,
+            store = app.chatStore,
+            jobs = app.figureJobs,
+            hasApiKey = settingsState.hasApiKey,
+            onOpenFigure = { push(Screen.Figure(it)) },
+            onOpenSettings = { push(Screen.Settings) },
+            onOpenExplore = null,
+            onOpenFigures = { push(Screen.Figures) },
+        )
+        is Screen.Figure -> FigureScreen(app.figureJobs, screen.jobId, darkFigures, onBack = ::pop)
+        Screen.Figures -> FiguresScreen(app.figureJobs, onOpen = { push(Screen.Figure(it)) }, onBack = ::pop)
+        Screen.Settings -> SettingsScreen(
+            settings = app.settings,
+            onBack = ::pop,
+            onOpenEnvironment = { push(Screen.Environment) },
+        )
+        Screen.Environment -> EnvironmentScreen(app.envController, onBack = ::pop)
     }
 }
