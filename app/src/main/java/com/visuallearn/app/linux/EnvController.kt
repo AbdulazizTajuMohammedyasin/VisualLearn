@@ -66,6 +66,13 @@ class EnvController(private val appContext: Context) {
         }
     }
 
+    /** Deletes the whole guest, figure jobs included. */
+    fun removeEnvironment() {
+        if (_state.value.runningTask != null) return
+        env.baseDir.deleteRecursively()
+        refresh()
+    }
+
     @Synchronized
     fun acquireForeground(text: String) {
         foregroundHolds++

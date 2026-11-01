@@ -98,6 +98,20 @@ class FigureJobs(
         }
     }
 
+    val hasActiveJobs: Boolean get() = _jobs.value.values.any { it.isActive }
+
+    fun reload() {
+        _jobs.value = loadJobs()
+    }
+
+    /** Frees space: drops the source and saved conversation of finished jobs, keeping their pages. */
+    fun clearBuildFiles() {
+        _jobs.value.values.filter { it.state == JobState.DONE }.forEach { job ->
+            File(jobDir(job.id), "work").deleteRecursively()
+            File(jobDir(job.id), "messages.json").delete()
+        }
+    }
+
     fun delete(id: String) {
         cancel(id)
         jobDir(id).deleteRecursively()
@@ -133,7 +147,13 @@ class FigureJobs(
             val current = _jobs.value[id] ?: return
             if (current.state == JobState.RUNNING) {
                 // Exited without a done/error event: treat as interrupted so it can be resumed.
-                put(current.copy(state = JobState.INTERRUPTED, error = "The agent stopped (exit $code)."))
+                val reason = if (code == 137 || code == 9) {
+                    "Android stopped the build in the background. Resume to continue; if it keeps happening, " +
+                        "turn on Developer options › Disable child process restrictions."
+                } else {
+                    "The agent stopped (exit $code). Resume to continue."
+                }
+                put(current.copy(state = JobState.INTERRUPTED, error = reason))
             }
         } catch (e: Exception) {
             put((_jobs.value[id] ?: job).copy(state = JobState.FAILED, error = e.message))
