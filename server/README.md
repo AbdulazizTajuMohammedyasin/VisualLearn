@@ -23,6 +23,18 @@ VL_DEV_AUTH=1 VL_PUBLIC_URL=http://10.0.2.2:8080 npm start
 
 Debug builds may use plain HTTP to `10.0.2.2` and `localhost`; release builds need HTTPS.
 
+## Container
+
+`server/Dockerfile` builds an image with Node 24, Chromium, OpenCode and Anatomy pinned to a commit. Build it from the repository root:
+
+```sh
+docker build -f server/Dockerfile -t visuallearn-server .
+docker run -p 8080:8080 -v visuallearn-data:/app/server/data \
+  -e VL_SIGNING_SECRET=… -e VL_PUBLIC_URL=https://api.example.com -e VL_SMTP_URL=… visuallearn-server
+```
+
+The image hasn't been built yet: no Docker on the development machine. Expect to adjust it on the first build.
+
 ## Tests
 
 ```sh
