@@ -9,6 +9,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.saveable.listSaver
@@ -115,9 +116,11 @@ private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<Stri
     fun pop() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
 
     val openJob by pendingJob.collectAsStateWithLifecycle()
-    openJob?.let { id ->
-        pendingJob.value = null
-        push(Screen.Figure(id))
+    LaunchedEffect(openJob) {
+        openJob?.let { id ->
+            pendingJob.value = null
+            push(Screen.Figure(id))
+        }
     }
 
     val settingsState by app.settings.state.collectAsStateWithLifecycle()
