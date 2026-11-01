@@ -1,60 +1,64 @@
-/* Matches the app's Compose theme (ui/Theme.kt): ink on paper, one warm accent. */
+/* Matches the app's Compose theme (ui/Theme.kt): black and graphite, one typeface,
+   colour only for state (blue: where you are, green: right, red: wrong). */
+@font-face {
+  font-family: Geist;
+  src: url("./fonts/geist.ttf") format("truetype");
+  font-weight: 100 900;
+}
 :root {
-  --bg: #f7f3ea;
-  --surface: #eae4d6;
-  --surface-low: #f3eee3;
-  --ink: #1b1b19;
-  --muted: #5c5a52;
-  --line: #d8d1c0;
-  --accent: #c2603e;
-  --accent-ink: #ffffff;
-  --accent-soft: #f4dccf;
-  --right: #2e6b3a;
-  --right-soft: #dcebd9;
-  --wrong: #b3261e;
-  --wrong-soft: #f6dcd8;
+  --bg: #ffffff;
+  --surface: #f3f3f5;
+  --surface-low: #ffffff;
+  --ink: #000000;
+  --on-ink: #ffffff;
+  --muted: #6b6b73;
+  --line: #e4e4e7;
+  --here: #2f64e8;
+  --right: #1f9d5c;
+  --right-soft: #e3f5ea;
+  --wrong: #d63a42;
+  --wrong-soft: #fbe6e7;
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --bg: #151514;
-  --surface: #262624;
-  --surface-low: #1a1a18;
-  --ink: #ede8dc;
-  --muted: #b4afa3;
-  --line: #3a3935;
-  --accent: #e08a68;
-  --accent-ink: #2b1209;
-  --accent-soft: #5a2c1c;
-  --right: #9fd4a6;
-  --right-soft: #1f3a24;
-  --wrong: #f2b8b5;
-  --wrong-soft: #4a1f1c;
+  --bg: #000000;
+  --surface: #121214;
+  --surface-low: #1c1c1f;
+  --ink: #f4f4f1;
+  --on-ink: #000000;
+  --muted: #8b8b92;
+  --line: #26262a;
+  --here: #5b8cff;
+  --right: #34c77b;
+  --right-soft: #10291b;
+  --wrong: #f2545b;
+  --wrong-soft: #2e1214;
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--ink); -webkit-text-size-adjust: 100%; }
-body { font: 15px/1.5 Roboto, system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+body { font: 15px/1.5 Geist, system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
 #root { padding: 2px 0; }
 p { margin: 0; }
 code { font-family: ui-monospace, "Roboto Mono", monospace; font-size: .9em; background: var(--surface-low); padding: 1px 4px; border-radius: 4px; }
 
 .lesson { display: flex; flex-direction: column; gap: 12px; }
-.block { background: var(--surface); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.block { background: var(--surface); border-radius: 24px; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
 .block.text { background: none; padding: 0 2px; }
 .block-header { display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 2px 12px; }
 .block-header .eyebrow { grid-column: 1; }
-.block-header h2 { grid-column: 1; margin: 0; font-size: 17px; line-height: 1.3; font-weight: 600; }
-.block-header .count { grid-column: 2; grid-row: 1 / span 2; align-self: center; font: 500 13px/1 Roboto, sans-serif; color: var(--muted); font-variant-numeric: tabular-nums; }
-.eyebrow { font: 600 11px/1.2 Roboto, sans-serif; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.block-header h2 { grid-column: 1; margin: 0; font-size: 19px; line-height: 1.3; font-weight: 600; letter-spacing: -.015em; }
+.block-header .count { grid-column: 2; grid-row: 1 / span 2; align-self: center; font: 500 13px/1 Geist, sans-serif; color: var(--muted); font-variant-numeric: tabular-nums; }
+.eyebrow { font: 500 13px/1.2 Geist, sans-serif; color: var(--muted); }
 
 button {
-  font: 500 14px/1.2 Roboto, sans-serif; color: var(--ink); background: transparent;
-  border: 1px solid var(--line); border-radius: 999px; padding: 10px 18px; min-height: 44px; cursor: pointer;
+  font: 500 15px/1.2 Geist, sans-serif; color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 999px; padding: 12px 20px; min-height: 48px; cursor: pointer;
 }
-button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+button.primary { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
 button:disabled { opacity: .45; cursor: default; }
-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:focus-visible { outline: 2px solid var(--here); outline-offset: 2px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .row > button { flex: 1; }
 
@@ -66,7 +70,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .options { display: flex; flex-direction: column; gap: 6px; }
 .option {
   display: flex; gap: 10px; align-items: flex-start; text-align: left; width: 100%;
-  border-radius: 12px; padding: 10px 12px; background: var(--surface-low); border-color: transparent; font-weight: 400; line-height: 1.4;
+  border-radius: 16px; padding: 13px 16px; background: var(--surface-low); border-color: transparent; font-weight: 400; line-height: 1.4;
 }
 .option .letter { font-weight: 600; color: var(--muted); min-width: 14px; }
 .option:disabled { opacity: 1; }
@@ -83,29 +87,31 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* flashcards */
 .flashcard {
-  min-height: 150px; width: 100%; border-radius: 14px; border: 1px solid var(--line); background: var(--bg);
+  min-height: 168px; width: 100%; border-radius: 20px; border: 1px solid var(--line); background: var(--surface-low);
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 20px; text-align: center;
-  font-weight: 400; transition: background .2s;
+  font-weight: 400; transition: background .2s, color .2s;
 }
-.flashcard .face { font-size: 18px; line-height: 1.4; }
-.flashcard.flipped { background: var(--accent-soft); border-color: var(--accent); }
-.flashcard.flipped .face { font-size: 16px; }
+.flashcard .face { font-size: 20px; line-height: 1.35; font-weight: 600; letter-spacing: -.01em; }
+/* The answer side is the card turned over: ink and paper swap. */
+.flashcard.flipped { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.flashcard.flipped .hint { color: var(--on-ink); opacity: .6; }
+.flashcard.flipped .face { font-size: 16px; font-weight: 400; letter-spacing: 0; }
 .flashcard .hint { font-size: 12px; color: var(--muted); }
 .flashcard.static { min-height: 0; align-items: flex-start; text-align: left; }
 .flashcard.static .back { color: var(--muted); }
 
 /* steps */
 .dots { display: flex; gap: 6px; list-style: none; margin: 0; padding: 0; }
-.dots li { flex: 1; height: 4px; border-radius: 2px; background: var(--line); }
-.dots li.past { background: var(--muted); }
-.dots li.on { background: var(--accent); }
-.step h3 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+.dots li { flex: 1; height: 3px; border-radius: 2px; background: var(--line); }
+.dots li.past { background: var(--ink); opacity: .7; }
+.dots li.on { background: var(--here); }
+.step h3 { margin: 0 0 4px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
 
 /* callout and figure */
-.callout { background: var(--accent-soft); gap: 4px; }
-.callout.tip { background: var(--right-soft); }
+.callout { background: var(--surface-low); border: 1px solid var(--line); gap: 4px; }
+.callout.tip { background: var(--right-soft); border-color: transparent; }
 .callout.tip .eyebrow { color: var(--right); }
-.callout.warning { background: var(--wrong-soft); }
+.callout.warning { background: var(--wrong-soft); border-color: transparent; }
 .callout.warning .eyebrow { color: var(--wrong); }
 .figure { align-items: flex-start; }
 

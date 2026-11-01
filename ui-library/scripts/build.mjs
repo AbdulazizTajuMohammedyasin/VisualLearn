@@ -17,6 +17,8 @@ const result = await esbuild.build({
   jsx: "automatic",
   define: { "process.env.NODE_ENV": '"production"' },
   legalComments: "none",
+  // The typeface is inlined too (SIL OFL 1.1, see src/fonts/OFL.txt).
+  loader: { ".ttf": "dataurl" },
   outdir: "out",
   write: false,
   logLevel: "warning",
@@ -29,7 +31,7 @@ const html = `<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:">
 <style>${css}</style>
 </head>
 <body>
