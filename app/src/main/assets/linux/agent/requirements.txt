@@ -1,0 +1,6 @@
+# Pinned so every Rust-built dependency has an armhf (armv7l, cp311) wheel on piwheels.
+--only-binary pydantic-core,jiter
+anthropic==2.3.0
+pydantic==2.14.1
+pydantic-core==2.50.1
+jiter==0.18.0

@@ -63,13 +63,20 @@ class MainActivity : ComponentActivity() {
     /** Debug builds only: `adb shell am start -n com.visuallearn.app/.MainActivity --es task checks` */
     private fun runDebugTask(intent: Intent?) {
         if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
-        val controller = (application as VisualLearnApp).envController
+        val app = application as VisualLearnApp
+        val controller = app.envController
         when (intent?.getStringExtra("task")) {
             "install" -> controller.installRootfs()
             "tools" -> controller.installTools()
+            "setup" -> controller.setUpEverything()
             "checks" -> controller.runChecks()
             "demo" -> controller.buildDemo()
+            "figure" -> intent.getStringExtra("prompt")?.let { app.figureJobs.create(it, "dark") }
         }
+    }
+
+    companion object {
+        const val EXTRA_JOB = "job"
     }
 }
 

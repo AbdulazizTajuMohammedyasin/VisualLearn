@@ -16,6 +16,7 @@ import java.io.File
 
 data class EnvState(
     val installed: Boolean = false,
+    val toolsReady: Boolean = false,
     val runningTask: String? = null,
     val lastResult: String? = null,
     val log: List<String> = emptyList(),
@@ -23,8 +24,8 @@ data class EnvState(
 )
 
 /**
- * Runs one Linux task at a time and keeps the process alive with a foreground
- * service while it does. Lives for the whole app process.
+ * Runs one Linux maintenance task at a time (install, setup, checks) and keeps the
+ * process in the foreground while any task or figure job is running.
  */
 class EnvController(private val appContext: Context) {
 
@@ -32,6 +33,7 @@ class EnvController(private val appContext: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _state = MutableStateFlow(EnvState())
     val state: StateFlow<EnvState> = _state.asStateFlow()
+    private var foregroundHolds = 0
 
     init {
         refresh()
@@ -48,19 +50,47 @@ class EnvController(private val appContext: Context) {
 
     fun buildDemo() = launchTask("Build demo figure") { runAsset("build-demo.sh") }
 
-    private suspend fun runAsset(name: String): Int {
-        val target = env.guestFile("/opt/visuallearn/$name")
+    /** Installs Debian if needed, then the tools: the whole first-run setup in one task. */
+    fun setUpEverything() = launchTask("Set up") {
+        if (!env.isInstalled) env.installRootfs(::log)
+        runAsset("setup.sh")
+    }
+
+    fun isToolsReady(): Boolean = env.guestFile(TOOLS_MARKER).exists()
+
+    fun installAsset(asset: String, guestPath: String) {
+        val target = env.guestFile(guestPath)
         target.parentFile?.mkdirs()
-        appContext.assets.open("linux/$name").use { input ->
+        appContext.assets.open("linux/$asset").use { input ->
             target.outputStream().use { input.copyTo(it) }
         }
-        return env.run("sh /opt/visuallearn/$name", ::log)
+    }
+
+    @Synchronized
+    fun acquireForeground(text: String) {
+        foregroundHolds++
+        ContextCompat.startForegroundService(
+            appContext,
+            Intent(appContext, EnvService::class.java).putExtra(EnvService.EXTRA_TEXT, text),
+        )
+    }
+
+    @Synchronized
+    fun releaseForeground() {
+        foregroundHolds = (foregroundHolds - 1).coerceAtLeast(0)
+        if (foregroundHolds == 0) appContext.stopService(Intent(appContext, EnvService::class.java))
+    }
+
+    private suspend fun runAsset(name: String): Int {
+        installAsset(name, "/opt/visuallearn/$name")
+        if (name == "setup.sh") installAsset("agent/requirements.txt", "/opt/visuallearn/requirements.txt")
+        return env.run("sh /opt/visuallearn/$name", onLine = ::log)
     }
 
     private fun launchTask(name: String, block: suspend () -> Int) {
         if (_state.value.runningTask != null) return
         _state.update { it.copy(runningTask = name, lastResult = null, log = it.log + "── $name ──") }
-        ContextCompat.startForegroundService(appContext, Intent(appContext, EnvService::class.java))
+        acquireForeground("$name…")
         scope.launch {
             val started = System.currentTimeMillis()
             val result = try {
@@ -74,14 +104,14 @@ class EnvController(private val appContext: Context) {
             log("$result in ${secs}s")
             _state.update { it.copy(runningTask = null, lastResult = result) }
             refresh()
-            appContext.stopService(Intent(appContext, EnvService::class.java))
+            releaseForeground()
         }
     }
 
     private fun refresh() {
         val figures = env.guestFile("/root/figures").listFiles { f -> f.extension == "html" }
             ?.sortedBy { it.name }.orEmpty()
-        _state.update { it.copy(installed = env.isInstalled, figures = figures) }
+        _state.update { it.copy(installed = env.isInstalled, toolsReady = isToolsReady(), figures = figures) }
     }
 
     private fun log(line: String) {
@@ -92,5 +122,6 @@ class EnvController(private val appContext: Context) {
     private companion object {
         const val MAX_LOG_LINES = 600
         const val TAG = "VLEnv"
+        const val TOOLS_MARKER = "/opt/visuallearn/.tools-ready"
     }
 }

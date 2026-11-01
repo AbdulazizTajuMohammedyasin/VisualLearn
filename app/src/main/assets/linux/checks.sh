@@ -14,4 +14,6 @@ check git      git --version
 check chromium chromium --version
 check headless sh -c 'chromium --headless=new --no-sandbox --disable-gpu --dump-dom "data:text/html,<p id=x>ok</p>" 2>/dev/null | grep -o "<p id=\"x\">ok</p>"'
 check anatomy  test -f /opt/anatomy/SKILL.md
+check capture  sh -c 'cd /opt/anatomy/examples/dial-indicator && node build.mjs >/dev/null && rm -f /tmp/vl-shot.png && node ../../scripts/capture.mjs dial-indicator.html --out /tmp/vl-shot.png >/dev/null 2>&1 && test -s /tmp/vl-shot.png && echo "screenshot $(wc -c < /tmp/vl-shot.png) bytes"'
+check agent    /opt/vlagent/bin/python -c 'import anthropic; print("anthropic", anthropic.__version__)'
 exit $fail

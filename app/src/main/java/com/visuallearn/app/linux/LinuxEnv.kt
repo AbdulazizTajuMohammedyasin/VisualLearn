@@ -63,14 +63,21 @@ class LinuxEnv(private val context: Context) {
      * Runs [script] with /bin/sh inside the guest as fake root, streaming merged
      * stdout/stderr lines to [onLine]. Returns the exit code.
      */
-    suspend fun run(script: String, onLine: (String) -> Unit): Int = withContext(Dispatchers.IO) {
+    suspend fun run(
+        script: String,
+        extraEnv: Map<String, String> = emptyMap(),
+        onStart: (Process) -> Unit = {},
+        onLine: (String) -> Unit,
+    ): Int = withContext(Dispatchers.IO) {
         val process = ProcessBuilder(command("/bin/sh", "-c", script))
             .redirectErrorStream(true)
             .also { pb ->
                 pb.environment().clear()
                 pb.environment().putAll(environment())
+                pb.environment().putAll(extraEnv)
             }
             .start()
+        onStart(process)
         process.inputStream.bufferedReader().useLines { lines -> lines.forEach(onLine) }
         process.waitFor()
     }

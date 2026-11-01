@@ -2,3 +2,4 @@
 gradlew text eol=lf
 *.bat text eol=crlf
 *.so binary
+*.py text eol=lf

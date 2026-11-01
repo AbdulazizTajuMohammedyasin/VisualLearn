@@ -47,4 +47,16 @@ if [ "$(git -C /opt/anatomy rev-parse HEAD 2>/dev/null || true)" != "$ANATOMY_CO
     git -C /opt/anatomy checkout -q FETCH_HEAD
 fi
 
+step "Figure agent (Python)"
+if [ ! -x /opt/vlagent/bin/python ]; then
+    python3 -m venv /opt/vlagent
+fi
+# Debian's pip 23 only accepts linux_armv8l wheels under a 64-bit kernel; newer pip
+# also accepts armv7l. piwheels carries armv7l wheels for pydantic-core and jiter.
+/opt/vlagent/bin/pip install -q --disable-pip-version-check -U pip
+/opt/vlagent/bin/pip install -q --disable-pip-version-check --prefer-binary \
+    --extra-index-url https://www.piwheels.org/simple -r /opt/visuallearn/requirements.txt
+/opt/vlagent/bin/python -c 'import anthropic; print("anthropic", anthropic.__version__)'
+
+touch /opt/visuallearn/.tools-ready
 step "Done"
