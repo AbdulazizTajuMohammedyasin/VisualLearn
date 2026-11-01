@@ -22,6 +22,7 @@ data class SettingsState(
     val hasApiKey: Boolean,
     val figureModel: FigureModel,
     val darkFigures: Boolean?,
+    val setupSkipped: Boolean,
 )
 
 /**
@@ -50,6 +51,14 @@ class Settings(context: Context) {
             _state.value = read()
         }
 
+    /** The user chose to chat without setting up the figure environment. */
+    var setupSkipped: Boolean
+        get() = prefs.getBoolean(KEY_SETUP_SKIPPED, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_SETUP_SKIPPED, value).apply()
+            _state.value = read()
+        }
+
     /** null follows the system theme. */
     var darkFigures: Boolean?
         get() = if (prefs.contains(KEY_DARK)) prefs.getBoolean(KEY_DARK, true) else null
@@ -62,6 +71,7 @@ class Settings(context: Context) {
         hasApiKey = prefs.contains(KEY_API),
         figureModel = figureModel,
         darkFigures = darkFigures,
+        setupSkipped = setupSkipped,
     )
 
     private fun secretKey(): SecretKey {
@@ -95,6 +105,7 @@ class Settings(context: Context) {
         const val KEY_API = "api_key"
         const val KEY_MODEL = "figure_model"
         const val KEY_DARK = "dark_figures"
+        const val KEY_SETUP_SKIPPED = "setup_skipped"
         const val KEY_ALIAS = "visuallearn_api_key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
     }

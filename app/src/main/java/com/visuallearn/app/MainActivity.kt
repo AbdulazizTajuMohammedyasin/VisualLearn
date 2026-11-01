@@ -19,6 +19,7 @@ import com.visuallearn.app.ui.EnvironmentScreen
 import com.visuallearn.app.ui.FigureScreen
 import com.visuallearn.app.ui.FiguresScreen
 import com.visuallearn.app.ui.SettingsScreen
+import com.visuallearn.app.ui.SetupScreen
 import com.visuallearn.app.ui.VisualLearnTheme
 import kotlinx.coroutines.flow.MutableStateFlow
 
@@ -109,6 +110,12 @@ private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<Stri
 
     val settingsState by app.settings.state.collectAsStateWithLifecycle()
     val darkFigures = settingsState.darkFigures ?: isSystemInDarkTheme()
+
+    val envState by app.envController.state.collectAsStateWithLifecycle()
+    if (!envState.toolsReady && !settingsState.setupSkipped) {
+        SetupScreen(app.envController, onSkip = { app.settings.setupSkipped = true })
+        return
+    }
 
     BackHandler(enabled = stack.size > 1) { pop() }
 

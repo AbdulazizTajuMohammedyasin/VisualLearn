@@ -28,6 +28,7 @@ apt-get update -q
 apt-get install -y -q --no-install-recommends \
     python3 python3-venv python3-pip chromium git ca-certificates curl xz-utils perl fonts-dejavu-core \
     libatomic1
+apt-get clean
 
 if [ "$(/opt/node/bin/node -v 2>/dev/null || true)" != "$NODE_VERSION" ]; then
     step "Node.js $NODE_VERSION"
