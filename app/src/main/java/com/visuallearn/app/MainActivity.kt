@@ -128,6 +128,7 @@ private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<S
     }
 
     val settingsState by app.settings.state.collectAsStateWithLifecycle()
+    val online by app.connectivity.online.collectAsStateWithLifecycle()
     val darkFigures = settingsState.darkFigures ?: isSystemInDarkTheme()
 
     BackHandler(enabled = stack.size > 1) { pop() }
@@ -136,6 +137,7 @@ private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<S
         Screen.Chat -> ChatScreen(
             chat = app.chat,
             figures = app.figures,
+            online = online,
             onOpenFigure = { push(Screen.Figure(it)) },
             onOpenSettings = { push(Screen.Settings) },
             onOpenExplore = { push(Screen.Explore) },

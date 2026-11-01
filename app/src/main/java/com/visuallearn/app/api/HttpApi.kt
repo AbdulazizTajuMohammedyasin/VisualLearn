@@ -1,5 +1,14 @@
 package com.visuallearn.app.api
 
+import com.visuallearn.app.api.ApiJson.parseConversation
+import com.visuallearn.app.api.ApiJson.parseError
+import com.visuallearn.app.api.ApiJson.parseFigure
+import com.visuallearn.app.api.ApiJson.parseMessage
+import com.visuallearn.app.api.ApiJson.parsePart
+import com.visuallearn.app.api.ApiJson.parseSummary
+import com.visuallearn.app.api.ApiJson.parseSync
+import com.visuallearn.app.api.ApiJson.parseTokens
+import com.visuallearn.app.api.ApiJson.parseUser
 import com.visuallearn.app.auth.TokenStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -12,7 +21,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.IOException
 import java.util.UUID
@@ -65,8 +73,7 @@ class HttpApi(
         parseSummary(call("POST", "/conversations", JSONObject()))
 
     override suspend fun conversation(id: String): Conversation {
-        val o = call("GET", "/conversations/$id")
-        return Conversation(o.getString("id"), o.optString("title"), o.getJSONArray("messages").objects().map(::parseMessage))
+        return parseConversation(call("GET", "/conversations/$id"))
     }
 
     override suspend fun deleteConversation(id: String) {
@@ -91,7 +98,7 @@ class HttpApi(
 
     override fun messageEvents(messageId: String): Flow<MessageEvent> = sse("/messages/$messageId/events") { event, data ->
         when (event) {
-            "part.start" -> MessageEvent.PartStart(data.getInt("partIndex"), parseStartPart(data))
+            "part.start" -> MessageEvent.PartStart(data.getInt("partIndex"), parsePart(data) ?: Part.Text(""))
             "text.delta" -> MessageEvent.TextDelta(data.getInt("partIndex"), data.getString("text"))
             "ui.delta" -> MessageEvent.UiDelta(data.getInt("partIndex"), data.getString("program"))
             "message.done" -> MessageEvent.Done(parseMessage(data.getJSONObject("message")))
@@ -106,6 +113,9 @@ class HttpApi(
     override suspend fun stopMessage(messageId: String) {
         call("POST", "/messages/$messageId/stop", JSONObject())
     }
+
+    override suspend fun sync(since: String?): SyncResult =
+        parseSync(call("GET", "/sync" + (since?.let { "?since=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")))
 
     override suspend fun figures(): List<Figure> =
         call("GET", "/figures?limit=100").getJSONArray("items").objects().map(::parseFigure)
@@ -226,76 +236,6 @@ class HttpApi(
             }
         }
     }.flowOn(Dispatchers.IO)
-
-    // --- parsing ---
-
-    private fun parseTokens(o: JSONObject) = Tokens(
-        o.getString("accessToken"),
-        java.time.Instant.parse(o.getString("accessTokenExpiresAt")).toEpochMilli(),
-        o.getString("refreshToken"),
-    )
-
-    private fun parseUser(o: JSONObject) = User(
-        o.getString("id"), o.optString("displayName"), o.optStringOrNull("email"), o.optStringOrNull("avatarUrl"),
-        o.optString("role", "user"),
-    )
-
-    private fun parseSummary(o: JSONObject) = ConversationSummary(o.getString("id"), o.optString("title"), o.optString("updatedAt"))
-
-    private fun parseMessage(o: JSONObject) = Message(
-        id = o.getString("id"),
-        role = if (o.optString("role") == "user") Role.USER else Role.ASSISTANT,
-        status = when (o.optString("status")) {
-            "streaming" -> MessageStatus.STREAMING
-            "failed" -> MessageStatus.FAILED
-            else -> MessageStatus.COMPLETE
-        },
-        parts = o.optJSONArray("parts")?.objects()?.mapNotNull(::parsePart).orEmpty(),
-        error = o.optJSONObject("error")?.let(::parseError),
-    )
-
-    private fun parsePart(o: JSONObject): Part? = when (o.optString("type")) {
-        "text" -> Part.Text(o.optString("text"))
-        "ui" -> Part.Ui(o.optString("program"), o.optString("libraryVersion"))
-        "figure" -> Part.Figure(o.getString("figureId"))
-        else -> null
-    }
-
-    private fun parseStartPart(o: JSONObject): Part = parsePart(o) ?: Part.Text("")
-
-    private fun parseFigure(o: JSONObject): Figure {
-        val pages = o.optJSONObject("pages")
-        return Figure(
-            id = o.getString("id"),
-            prompt = o.optString("prompt"),
-            status = runCatching { FigureStatus.valueOf(o.getString("status").uppercase()) }.getOrDefault(FigureStatus.QUEUED),
-            queuePosition = if (o.isNull("queuePosition")) null else o.optInt("queuePosition"),
-            estimatedStartAt = o.optStringOrNull("estimatedStartAt"),
-            stage = o.optStringOrNull("stage"),
-            message = o.optStringOrNull("message"),
-            progress = if (o.isNull("progress")) null else o.optDouble("progress"),
-            title = o.optStringOrNull("title"),
-            summary = o.optStringOrNull("summary"),
-            conversationId = o.optStringOrNull("conversationId"),
-            createdAt = o.optString("createdAt"),
-            updatedAt = o.optString("updatedAt"),
-            startedAt = o.optStringOrNull("startedAt"),
-            finishedAt = o.optStringOrNull("finishedAt"),
-            error = o.optJSONObject("error")?.let(::parseError),
-            darkPage = pages?.optJSONObject("dark")?.let(::parsePage),
-            lightPage = pages?.optJSONObject("light")?.let(::parsePage),
-            previewUrl = o.optStringOrNull("previewUrl"),
-        )
-    }
-
-    private fun parsePage(o: JSONObject) = Page(o.getString("url"), o.getString("sha256"), o.optLong("bytes"))
-
-    private fun parseError(o: JSONObject) =
-        ApiError(o.optString("code", "error"), o.optString("message", "Something went wrong."), o.optBoolean("retryable"))
-
-    private fun JSONArray.objects(): List<JSONObject> = (0 until length()).map { getJSONObject(it) }
-
-    private fun JSONObject.optStringOrNull(key: String): String? = if (isNull(key)) null else optString(key).takeIf { it.isNotEmpty() }
 
     private companion object {
         val JSON = "application/json; charset=utf-8".toMediaType()

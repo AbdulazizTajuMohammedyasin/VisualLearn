@@ -19,6 +19,9 @@ interface VisualLearnApi {
     /** Deletes the account and all its data, then signs out. */
     suspend fun deleteAccount()
 
+    // Sync: everything changed since [since] (null for everything), for the offline copy.
+    suspend fun sync(since: String?): SyncResult
+
     // Chat
     suspend fun conversations(): List<ConversationSummary>
     suspend fun createConversation(): ConversationSummary

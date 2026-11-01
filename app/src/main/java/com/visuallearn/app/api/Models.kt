@@ -71,6 +71,15 @@ data class Figure(
     val previewUrl: String?,
 )
 
+/** Changes since a sync cursor (docs/server-api.md, section 7). */
+data class SyncResult(
+    val conversations: List<ConversationSummary>,
+    val deletedConversationIds: List<String>,
+    val figures: List<Figure>,
+    val deletedFigureIds: List<String>,
+    val cursor: String,
+)
+
 /** The server's error body; [message] is safe to show to the user. */
 data class ApiError(val code: String, val message: String, val retryable: Boolean)
 

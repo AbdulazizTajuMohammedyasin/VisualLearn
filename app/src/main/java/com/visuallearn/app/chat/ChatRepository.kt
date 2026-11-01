@@ -1,6 +1,7 @@
 package com.visuallearn.app.chat
 
 import com.visuallearn.app.api.ApiException
+import com.visuallearn.app.api.Conversation
 import com.visuallearn.app.api.ConversationSummary
 import com.visuallearn.app.api.Message
 import com.visuallearn.app.api.MessageEvent
@@ -11,6 +12,7 @@ import com.visuallearn.app.api.SendMode
 import com.visuallearn.app.api.UiAction
 import com.visuallearn.app.api.VisualLearnApi
 import com.visuallearn.app.figures.FiguresRepository
+import com.visuallearn.app.offline.OfflineStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -31,18 +33,28 @@ data class ChatState(
     val isStreaming get() = messages.any { it.status == MessageStatus.STREAMING }
 }
 
-/** The open conversation; replies stream from the server as message parts. */
-class ChatRepository(private val api: VisualLearnApi, private val figures: FiguresRepository) {
+/**
+ * The open conversation; replies stream from the server as message parts. Finished
+ * conversations are kept in [store] so they can be read offline.
+ */
+class ChatRepository(
+    private val api: VisualLearnApi,
+    private val figures: FiguresRepository,
+    private val store: OfflineStore,
+) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val _summaries = MutableStateFlow<List<ConversationSummary>>(emptyList())
+    private val _summaries = MutableStateFlow(store.summaries())
     val summaries: StateFlow<List<ConversationSummary>> = _summaries.asStateFlow()
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
     private var streamJob: Job? = null
 
     fun refreshList() = scope.launch {
-        runCatching { api.conversations() }.onSuccess { _summaries.value = it }
+        runCatching { api.conversations() }.onSuccess {
+            _summaries.value = it
+            store.saveSummaries(it)
+        }
     }
 
     fun newChat() {
@@ -50,25 +62,60 @@ class ChatRepository(private val api: VisualLearnApi, private val figures: Figur
         _state.value = ChatState()
     }
 
+    /** Shows the saved copy at once, then the server's latest when there is a connection. */
     fun open(id: String) {
         stop()
-        _state.value = ChatState(conversationId = id, loading = true)
+        val saved = store.conversation(id)
+        _state.value = saved?.let { ChatState(it.id, it.title, it.messages, loading = true) }
+            ?: ChatState(conversationId = id, loading = true)
         scope.launch {
             runCatching { api.conversation(id) }
                 .onSuccess { c ->
+                    if (_state.value.conversationId != id) return@onSuccess
                     _state.value = ChatState(c.id, c.title, c.messages)
+                    save()
                     c.messages.flatMap { it.parts }.filterIsInstance<Part.Figure>().forEach { figures.watch(it.figureId) }
                     c.messages.lastOrNull { it.status == MessageStatus.STREAMING }?.let { follow(it.id) }
                 }
-                .onFailure { e -> _state.update { it.copy(loading = false, error = e.userMessage()) } }
+                .onFailure { e ->
+                    if ((e as? ApiException)?.httpStatus == 404) removeLocal(id)
+                    // Offline with a saved copy: just show it.
+                    val error = if (saved != null && e !is ApiException) null else e.userMessage()
+                    _state.update { if (it.conversationId == id) it.copy(loading = false, error = error) else it }
+                }
         }
     }
 
     fun delete(id: String) = scope.launch {
-        runCatching { api.deleteConversation(id) }.onSuccess {
-            if (_state.value.conversationId == id) newChat()
-            refreshList()
+        runCatching { api.deleteConversation(id) }
+            .onSuccess { removeLocal(id) }
+            .onFailure { e -> _state.update { it.copy(error = e.userMessage()) } }
+    }
+
+    /** A conversation changed on the server (another device, or a reply that finished). */
+    suspend fun applyRemote(summary: ConversationSummary) {
+        _summaries.update { list -> (listOf(summary) + list.filterNot { it.id == summary.id }).sortedByDescending { it.updatedAt } }
+        store.saveSummaries(_summaries.value)
+        val open = _state.value
+        if (open.conversationId == summary.id && open.isStreaming) return
+        runCatching { api.conversation(summary.id) }.onSuccess { c ->
+            store.saveConversation(c)
+            _state.update { if (it.conversationId == c.id && !it.isStreaming) it.copy(title = c.title, messages = c.messages) else it }
         }
+    }
+
+    /** Removes a conversation from the phone, e.g. after it was deleted on the server. */
+    fun removeLocal(id: String) {
+        store.deleteConversation(id)
+        _summaries.update { list -> list.filterNot { it.id == id } }
+        if (_state.value.conversationId == id) newChat()
+    }
+
+    /** Forgets everything on sign-out. */
+    fun clear() {
+        stop()
+        _summaries.value = emptyList()
+        _state.value = ChatState()
     }
 
     fun send(text: String, mode: SendMode, uiAction: UiAction? = null) {
@@ -136,9 +183,19 @@ class ChatRepository(private val api: VisualLearnApi, private val figures: Figur
             is MessageEvent.Done -> {
                 event.message.parts.filterIsInstance<Part.Figure>().forEach { figures.watch(it.figureId) }
                 replace(event.message)
+                save()
             }
-            is MessageEvent.Failed -> mutate(messageId) { it.copy(status = MessageStatus.FAILED, error = event.error) }
+            is MessageEvent.Failed -> {
+                mutate(messageId) { it.copy(status = MessageStatus.FAILED, error = event.error) }
+                save()
+            }
         }
+    }
+
+    private fun save() {
+        val s = _state.value
+        val id = s.conversationId ?: return
+        store.saveConversation(Conversation(id, s.title, s.messages))
     }
 
     private fun mutate(id: String, transform: (Message) -> Message) =

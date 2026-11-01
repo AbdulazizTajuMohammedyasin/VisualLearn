@@ -15,6 +15,7 @@ import com.visuallearn.app.api.Figure
 import com.visuallearn.app.api.FigureStatus
 import com.visuallearn.app.api.Page
 import com.visuallearn.app.api.VisualLearnApi
+import com.visuallearn.app.offline.OfflineStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -32,17 +33,18 @@ import java.security.MessageDigest
  * Figure jobs run on the server; this keeps their latest state, follows active
  * ones live, and caches finished pages on the phone so they open offline.
  */
-class FiguresRepository(private val context: Context, private val api: VisualLearnApi) {
+class FiguresRepository(private val context: Context, private val api: VisualLearnApi, private val store: OfflineStore) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val cacheDir = File(context.filesDir, "figures").apply { mkdirs() }
     private val watchers = mutableMapOf<String, Job>()
-    private val _figures = MutableStateFlow<Map<String, Figure>>(emptyMap())
+    private val _figures = MutableStateFlow(store.figures().associateBy { it.id })
     val figures: StateFlow<Map<String, Figure>> = _figures.asStateFlow()
 
     fun refresh() = scope.launch {
         runCatching { api.figures() }.onSuccess { list ->
             _figures.update { current -> current + list.associateBy { it.id } }
+            store.saveFigures(_figures.value.values)
             list.filter { it.status.isActive }.forEach { watch(it.id) }
         }.onFailure { Log.w(TAG, "refresh failed", it) }
     }
@@ -78,9 +80,36 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
     }
 
     fun delete(id: String) = scope.launch {
-        runCatching { api.deleteFigure(id) }.onSuccess {
-            _figures.update { it - id }
+        runCatching { api.deleteFigure(id) }.onSuccess { removeLocal(listOf(id)) }
+    }
+
+    /** Applies figure changes from /sync: new states, pages to save, and deletions. */
+    suspend fun applySync(changed: List<Figure>, deletedIds: List<String>) {
+        changed.forEach(::put)
+        removeLocal(deletedIds)
+        // Includes jobs whose live stream dropped while the phone was offline.
+        _figures.value.values.filter { it.status.isActive }.forEach { watch(it.id) }
+        changed.filter { it.status == FigureStatus.SUCCEEDED }.forEach { saveFinishedPages(it) }
+    }
+
+    /** Removes figures from the phone, with any page no other figure uses. */
+    private fun removeLocal(ids: List<String>) {
+        if (ids.isEmpty()) return
+        synchronized(watchers) { ids.forEach { watchers.remove(it)?.cancel() } }
+        _figures.update { it - ids.toSet() }
+        store.saveFigures(_figures.value.values)
+        val kept = _figures.value.values.flatMap { listOfNotNull(it.darkPage, it.lightPage) }.map { cachedFile(it).name }.toSet()
+        cacheDir.listFiles().orEmpty().filter { it.name !in kept }.forEach { it.delete() }
+    }
+
+    /** Forgets everything on sign-out. */
+    fun clear() {
+        synchronized(watchers) {
+            watchers.values.forEach { it.cancel() }
+            watchers.clear()
         }
+        _figures.value = emptyMap()
+        clearCache()
     }
 
     /** The cached page for a finished figure, downloading and verifying it if needed. */
@@ -111,13 +140,21 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
         return file
     }
 
-    private fun put(figure: Figure) = _figures.update { it + (figure.id to figure) }
+    private fun put(figure: Figure) {
+        _figures.update { it + (figure.id to figure) }
+        store.saveFigures(_figures.value.values)
+    }
 
     private suspend fun onFinished(figure: Figure) {
-        if (figure.status == FigureStatus.SUCCEEDED) {
-            runCatching { figure.darkPage?.let { download(it) }; figure.lightPage?.let { download(it) } }
-        }
+        if (figure.status == FigureStatus.SUCCEEDED) saveFinishedPages(figure)
         if (figure.status != FigureStatus.CANCELLED) notify(figure)
+    }
+
+    /** Both theme pages, so the figure opens offline in either theme. */
+    private suspend fun saveFinishedPages(figure: Figure) = withContext(Dispatchers.IO) {
+        listOfNotNull(figure.darkPage, figure.lightPage)
+            .filterNot { cachedFile(it).exists() }
+            .forEach { page -> runCatching { download(page) }.onFailure { Log.w(TAG, "page download failed", it) } }
     }
 
     private fun notify(figure: Figure) {

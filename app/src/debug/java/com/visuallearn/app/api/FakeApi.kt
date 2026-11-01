@@ -1,10 +1,13 @@
 package com.visuallearn.app.api
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import com.visuallearn.app.auth.TokenStore
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import java.io.IOException
 import java.security.MessageDigest
 import java.time.Instant
 import java.util.UUID
@@ -20,6 +23,11 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     private val conversations = ConcurrentHashMap<String, Conversation>()
     private val figures = ConcurrentHashMap<String, FakeFigure>()
     private val pendingReplies = ConcurrentHashMap<String, Script>()
+
+    // For /sync: when each conversation last changed, and when things were deleted (epoch ms).
+    private val conversationChangedAt = ConcurrentHashMap<String, Long>()
+    private val deletedConversations = ConcurrentHashMap<String, Long>()
+    private val deletedFigures = ConcurrentHashMap<String, Long>()
 
     private data class FakeFigure(val figure: Figure, val startedAtMs: Long, var cancelledAt: String? = null)
     private data class Script(val conversationId: String, val text: String, val mode: SendMode)
@@ -51,26 +59,59 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     override suspend fun deleteAccount() {
         conversations.clear()
         figures.clear()
+        conversationChangedAt.clear()
+        deletedConversations.clear()
+        deletedFigures.clear()
         tokens.clear()
     }
 
-    override suspend fun conversations(): List<ConversationSummary> =
-        conversations.values.map { ConversationSummary(it.id, it.title, now()) }.reversed()
+    override suspend fun sync(since: String?): SyncResult {
+        requireOnline()
+        val cursor = System.currentTimeMillis()
+        val after = since?.toLongOrNull() ?: Long.MIN_VALUE
+        return SyncResult(
+            conversations = conversations.values.filter { (conversationChangedAt[it.id] ?: 0) > after }.map(::summary),
+            deletedConversationIds = deletedConversations.filterValues { it > after }.keys.toList(),
+            figures = figures.keys.map(::current).filter { Instant.parse(it.updatedAt).toEpochMilli() > after },
+            deletedFigureIds = deletedFigures.filterValues { it > after }.keys.toList(),
+            cursor = cursor.toString(),
+        )
+    }
+
+    override suspend fun conversations(): List<ConversationSummary> {
+        requireOnline()
+        return conversations.values.map(::summary).sortedByDescending { it.updatedAt }
+    }
 
     override suspend fun createConversation(): ConversationSummary {
+        requireOnline()
         val c = Conversation("conv_" + uuid(), "New chat", emptyList())
         conversations[c.id] = c
-        return ConversationSummary(c.id, c.title, now())
+        touch(c.id)
+        return summary(c)
     }
 
-    override suspend fun conversation(id: String): Conversation =
-        conversations[id] ?: throw ApiException(ApiError("not_found", "This chat no longer exists.", false), 404)
+    override suspend fun conversation(id: String): Conversation {
+        requireOnline()
+        return conversations[id] ?: throw ApiException(ApiError("not_found", "This chat no longer exists.", false), 404)
+    }
 
     override suspend fun deleteConversation(id: String) {
+        requireOnline()
         conversations.remove(id)
+        conversationChangedAt.remove(id)
+        deletedConversations[id] = System.currentTimeMillis()
     }
 
+    private fun touch(conversationId: String) {
+        conversationChangedAt[conversationId] = System.currentTimeMillis()
+    }
+
+    private fun summary(c: Conversation) =
+        ConversationSummary(c.id, c.title, Instant.ofEpochMilli(conversationChangedAt[c.id] ?: 0).toString())
+
     override suspend fun sendMessage(conversationId: String, text: String, mode: SendMode, uiAction: UiAction?): Pair<Message, Message> {
+        requireOnline()
         delay(200)
         val shown = text.ifBlank { uiAction?.let { "(${it.name})" }.orEmpty() }
         val user = Message("msg_" + uuid(), Role.USER, MessageStatus.COMPLETE, listOf(Part.Text(shown)))
@@ -78,6 +119,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
         conversations.computeIfPresent(conversationId) { _, c ->
             c.copy(title = if (c.messages.isEmpty()) shown.take(48) else c.title, messages = c.messages + user + assistant)
         }
+        touch(conversationId)
         pendingReplies[assistant.id] = Script(conversationId, shown, mode)
         return user to assistant
     }
@@ -120,6 +162,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
         conversations.computeIfPresent(script.conversationId) { _, c ->
             c.copy(messages = c.messages.map { if (it.id == messageId) done else it })
         }
+        touch(script.conversationId)
         emit(MessageEvent.Done(done))
     }
 
@@ -127,13 +170,21 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
         pendingReplies.remove(messageId)
     }
 
-    override suspend fun figures(): List<Figure> = figures.keys.map { current(it) }.sortedByDescending { it.createdAt }
+    override suspend fun figures(): List<Figure> {
+        requireOnline()
+        return figures.keys.map(::current).sortedByDescending { it.createdAt }
+    }
 
-    override suspend fun figure(id: String): Figure =
-        if (figures.containsKey(id)) current(id) else throw ApiException(ApiError("not_found", "Figure not found.", false), 404)
+    override suspend fun figure(id: String): Figure {
+        requireOnline()
+        if (!figures.containsKey(id)) throw ApiException(ApiError("not_found", "Figure not found.", false), 404)
+        return current(id)
+    }
 
-    override suspend fun createFigure(prompt: String, theme: String, conversationId: String?): Figure =
-        startFigure(prompt, conversationId)
+    override suspend fun createFigure(prompt: String, theme: String, conversationId: String?): Figure {
+        requireOnline()
+        return startFigure(prompt, conversationId)
+    }
 
     override fun figureEvents(id: String): Flow<Figure> = flow {
         var last: Figure? = null
@@ -147,23 +198,35 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     }
 
     override suspend fun cancelFigure(id: String): Figure {
+        requireOnline()
         figures[id]?.cancelledAt = now()
         return figure(id)
     }
 
     override suspend fun retryFigure(id: String): Figure {
+        requireOnline()
         val old = figures[id] ?: throw ApiException(ApiError("not_found", "Figure not found.", false), 404)
         figures[id] = FakeFigure(old.figure, System.currentTimeMillis())
         return figure(id)
     }
 
     override suspend fun deleteFigure(id: String) {
+        requireOnline()
         figures.remove(id)
+        deletedFigures[id] = System.currentTimeMillis()
     }
 
     override suspend fun downloadPage(page: Page): ByteArray {
+        requireOnline()
         delay(300)
         return context.assets.open(page.url.removePrefix(ASSET_PREFIX)).use { it.readBytes() }
+    }
+
+    /** The fake runs in-process, so it checks the phone's connection to behave like a remote server. */
+    private fun requireOnline() {
+        val cm = context.getSystemService(ConnectivityManager::class.java)
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) != true) throw IOException("No connection")
     }
 
     private fun startFigure(prompt: String, conversationId: String?): Figure {

@@ -89,6 +89,7 @@ private val SUGGESTIONS = listOf(
 fun ChatScreen(
     chat: ChatRepository,
     figures: FiguresRepository,
+    online: Boolean,
     onOpenFigure: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenExplore: () -> Unit,
@@ -119,7 +120,7 @@ fun ChatScreen(
                             selected = s.id == state.conversationId,
                             onClick = { chat.open(s.id); closeDrawer() },
                             badge = {
-                                IconButton(onClick = { chat.delete(s.id) }, modifier = Modifier.size(32.dp)) {
+                                if (online) IconButton(onClick = { chat.delete(s.id) }, modifier = Modifier.size(32.dp)) {
                                     Icon(Icons.Filled.Delete, "Delete chat", Modifier.size(18.dp))
                                 }
                             },
@@ -135,7 +136,15 @@ fun ChatScreen(
         Scaffold(
             topBar = {
                 TopAppBar(
-                    title = { Text(state.title.ifBlank { "VisualLearn" }, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    title = {
+                        Column {
+                            Text(state.title.ifBlank { "VisualLearn" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (!online) {
+                                Text("Offline · showing saved copy", style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    },
                     navigationIcon = { IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Filled.Menu, "Menu") } },
                     actions = { IconButton(onClick = chat::newChat) { Icon(Icons.Filled.Add, "New chat") } },
                 )
@@ -144,8 +153,8 @@ fun ChatScreen(
             Column(Modifier.padding(padding).fillMaxSize().imePadding()) {
                 Box(Modifier.weight(1f)) {
                     when {
-                        state.loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                        state.messages.isEmpty() -> EmptyState { chat.send(it, SendMode.AUTO) }
+                        state.loading && state.messages.isEmpty() -> LinearProgressIndicator(Modifier.fillMaxWidth())
+                        state.messages.isEmpty() -> EmptyState(enabled = online) { chat.send(it, SendMode.AUTO) }
                         else -> MessageList(
                             messages = state.messages,
                             figureCard = { id ->
@@ -161,11 +170,15 @@ fun ChatScreen(
                     Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp))
                 }
-                Composer(
-                    streaming = state.isStreaming,
-                    onSend = { text, figureMode -> chat.send(text, if (figureMode) SendMode.FIGURE else SendMode.AUTO) },
-                    onStop = chat::stop,
-                )
+                if (online) {
+                    Composer(
+                        streaming = state.isStreaming,
+                        onSend = { text, figureMode -> chat.send(text, if (figureMode) SendMode.FIGURE else SendMode.AUTO) },
+                        onStop = chat::stop,
+                    )
+                } else {
+                    OfflineNotice()
+                }
             }
         }
     }
@@ -183,7 +196,7 @@ private fun DrawerItem(label: String, icon: androidx.compose.ui.graphics.vector.
 }
 
 @Composable
-private fun EmptyState(onSuggestion: (String) -> Unit) {
+private fun EmptyState(enabled: Boolean, onSuggestion: (String) -> Unit) {
     Column(
         Modifier.fillMaxSize().padding(24.dp),
         verticalArrangement = Arrangement.Center,
@@ -201,7 +214,7 @@ private fun EmptyState(onSuggestion: (String) -> Unit) {
         )
         Spacer(Modifier.height(20.dp))
         SUGGESTIONS.forEach { s ->
-            AssistChip(onClick = { onSuggestion(s) }, label = { Text(s) }, modifier = Modifier.padding(vertical = 2.dp))
+            AssistChip(onClick = { onSuggestion(s) }, label = { Text(s) }, enabled = enabled, modifier = Modifier.padding(vertical = 2.dp))
         }
     }
 }
@@ -282,6 +295,25 @@ private fun TypingDots() {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(vertical = 8.dp)) {
         repeat(3) {
             Box(Modifier.size(8.dp).background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f), CircleShape))
+        }
+    }
+}
+
+/** Takes the composer's place without a connection: saved chats and figures stay readable. */
+@Composable
+private fun OfflineNotice() {
+    Surface(color = MaterialTheme.colorScheme.background) {
+        Surface(
+            shape = RoundedCornerShape(26.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp).fillMaxWidth(),
+        ) {
+            Text(
+                "You're offline. Saved chats and figures still open; new questions need a connection.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+            )
         }
     }
 }
