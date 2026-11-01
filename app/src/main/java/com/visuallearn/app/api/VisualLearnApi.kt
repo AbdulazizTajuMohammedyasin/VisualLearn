@@ -53,4 +53,7 @@ interface VisualLearnApi {
 
     /** Downloads a figure page (a signed URL from [Figure.darkPage] / [Figure.lightPage]). */
     suspend fun downloadPage(page: Page): ByteArray
+
+    /** Downloads a figure's preview image ([Figure.previewUrl], also signed). */
+    suspend fun downloadPreview(url: String): ByteArray
 }

@@ -139,8 +139,12 @@ class HttpApi(
         call("DELETE", "/figures/$id")
     }
 
-    override suspend fun downloadPage(page: Page): ByteArray = withContext(Dispatchers.IO) {
-        client.newCall(Request.Builder().url(page.url).build()).execute().use { response ->
+    override suspend fun downloadPage(page: Page): ByteArray = download(page.url)
+
+    override suspend fun downloadPreview(url: String): ByteArray = download(url)
+
+    private suspend fun download(url: String): ByteArray = withContext(Dispatchers.IO) {
+        client.newCall(Request.Builder().url(url).build()).execute().use { response ->
             if (!response.isSuccessful) throw ApiException(ApiError("download_failed", "Couldn't download the figure.", true), response.code)
             response.body!!.bytes()
         }

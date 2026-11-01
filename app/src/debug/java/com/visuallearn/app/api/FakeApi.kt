@@ -223,6 +223,8 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
         return context.assets.open(page.url.removePrefix(ASSET_PREFIX)).use { it.readBytes() }
     }
 
+    override suspend fun downloadPreview(url: String): ByteArray = throw IOException("The fake server has no previews")
+
     /** The fake runs in-process, so it checks the phone's connection to behave like a remote server. */
     private fun requireOnline() {
         val cm = context.getSystemService(ConnectivityManager::class.java)

@@ -20,6 +20,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -40,6 +41,13 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
     private val watchers = mutableMapOf<String, Job>()
     private val _figures = MutableStateFlow(store.figures().associateBy { it.id })
     val figures: StateFlow<Map<String, Figure>> = _figures.asStateFlow()
+
+    /** Preview images saved on the phone, by figure id. */
+    private val _previews = MutableStateFlow(
+        _figures.value.values.mapNotNull { f -> previewFile(f)?.takeIf { it.exists() }?.let { f.id to it } }.toMap(),
+    )
+    val previews: StateFlow<Map<String, File>> = _previews.asStateFlow()
+    private val previewDownloads = mutableSetOf<String>()
 
     fun refresh() = scope.launch {
         runCatching { api.figures() }.onSuccess { list ->
@@ -107,7 +115,10 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
         synchronized(watchers) { ids.forEach { watchers.remove(it)?.cancel() } }
         _figures.update { it - ids.toSet() }
         store.saveFigures(_figures.value.values)
-        val kept = _figures.value.values.flatMap { listOfNotNull(it.darkPage, it.lightPage) }.map { cachedFile(it).name }.toSet()
+        _previews.update { it - ids.toSet() }
+        val kept = _figures.value.values.flatMap { f ->
+            listOfNotNull(f.darkPage?.let(::cachedFile), f.lightPage?.let(::cachedFile), previewFile(f))
+        }.map { it.name }.toSet()
         cacheDir.listFiles().orEmpty().filter { it.name !in kept }.forEach { it.delete() }
     }
 
@@ -118,6 +129,7 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
             watchers.clear()
         }
         _figures.value = emptyMap()
+        _previews.value = emptyMap()
         clearCache()
     }
 
@@ -136,9 +148,42 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
 
     fun clearCache() {
         cacheDir.listFiles().orEmpty().forEach { it.delete() }
+        _previews.value = emptyMap()
     }
 
     private fun cachedFile(page: Page) = File(cacheDir, "${page.sha256}.html")
+
+    /** The server draws the preview from the dark page, so it is named after that page. */
+    private fun previewFile(figure: Figure) = figure.darkPage?.let { File(cacheDir, "${it.sha256}.png") }
+
+    private fun savePreview(figure: Figure) {
+        val file = previewFile(figure) ?: return
+        val url = figure.previewUrl ?: return
+        if (file.exists()) {
+            if (_previews.value[figure.id] != file) _previews.update { it + (figure.id to file) }
+            return
+        }
+        synchronized(previewDownloads) { if (!previewDownloads.add(figure.id)) return }
+        scope.launch(Dispatchers.IO) {
+            runCatching { api.downloadPreview(url) }
+                .onSuccess { bytes ->
+                    File(cacheDir, file.name + ".part").apply { writeBytes(bytes); renameTo(file) }
+                    _previews.update { it + (figure.id to file) }
+                }
+                .onFailure { Log.w(TAG, "preview download failed", it) }
+            synchronized(previewDownloads) { previewDownloads.remove(figure.id) }
+        }
+    }
+
+    /** The server draws a preview a few seconds after the figure finishes; ask for it then. */
+    private fun fetchPreviewSoon(id: String) = scope.launch {
+        for (wait in listOf(4_000L, 10_000L, 30_000L)) {
+            delay(wait)
+            val figure = runCatching { api.figure(id) }.getOrNull() ?: continue
+            put(figure)
+            if (figure.previewUrl != null) return@launch
+        }
+    }
 
     private suspend fun download(page: Page): File {
         val bytes = api.downloadPage(page)
@@ -152,10 +197,14 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
     private fun put(figure: Figure) {
         _figures.update { it + (figure.id to figure) }
         store.saveFigures(_figures.value.values)
+        if (figure.status == FigureStatus.SUCCEEDED) savePreview(figure)
     }
 
     private suspend fun onFinished(figure: Figure) {
-        if (figure.status == FigureStatus.SUCCEEDED) saveFinishedPages(figure)
+        if (figure.status == FigureStatus.SUCCEEDED) {
+            saveFinishedPages(figure)
+            if (figure.previewUrl == null) fetchPreviewSoon(figure.id)
+        }
         if (figure.status != FigureStatus.CANCELLED) notify(figure)
     }
 
