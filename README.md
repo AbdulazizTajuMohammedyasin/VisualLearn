@@ -1,6 +1,6 @@
 # VisualLearn
 
-An Android chat app for learning. Ask a question and get an answer. When an idea is easier to understand by seeing it, VisualLearn builds a working, interactive figure of it: a pin tumbler lock you can turn, a rate limiter you can flood, a cache you can miss. Figures are made with [Anatomy](https://github.com/wheresryan22/anatomy) and shown in a sandboxed WebView.
+An Android chat app for learning. Ask a question, or attach a PDF of your notes, a chapter or a paper, and VisualLearn teaches it in whatever form fits each part: an explanation, a step-by-step walkthrough, flashcards, a quiz, or a working 3D figure for anything that is easier to understand by seeing it move: a pin tumbler lock you can turn, an engine you can run, a cache you can miss. Figures are made with [Anatomy](https://github.com/wheresryan22/anatomy) and shown in a sandboxed WebView.
 
 The app is a thin client. All model calls and figure building happen on the VisualLearn server in [server/](server/); the phone signs in, streams chat, and renders what the server made.
 
@@ -10,6 +10,7 @@ The app is a thin client. All model calls and figure building happen on the Visu
 |---|---|
 | Sign-in (Google, email code), account deletion | Done |
 | Streaming chat with Markdown answers | Done |
+| PDF study packs: attach a PDF and get explanations, steps, flashcards, a quiz and figures | Done |
 | Figure jobs: progress, "Figure ready" notification, offline cache verified by sha256 | Done |
 | Explore: Anatomy community gallery | Done |
 | Settings, storage, licences | Done |
@@ -90,6 +91,7 @@ Release signing reads from environment variables, so no secrets go in the repo: 
 
 - **Chat.** A reply is a list of parts: `text` (Markdown), `figure` (a figure job id) and `ui` (an OpenUI Lang program). They stream over Server-Sent Events, and the stream resumes with `Last-Event-ID` after a dropped connection.
 - **Figures.** A figure is a server job. The app follows its progress, and when it finishes the app downloads the dark and light HTML pages. It checks each page's sha256 and keeps a copy on the phone, so a figure that has loaded once opens without a connection.
+- **PDFs.** An attached PDF is uploaded to the chat, its text and pages read on the server. Models that read PDFs (Anthropic, OpenAI, Google) get the file itself, scans and diagrams included; others get the text. The model is told to build a study pack, choosing for each topic between an explanation, a step-by-step explainer, flashcards and a quiz, and starting a figure for up to two mechanisms.
 - **Interactive parts.** `OpenUiView` loads the bundled renderer page into a WebView with no network. It sizes itself to the content, and answers survive scrolling, restarts and going offline. Follow-ups such as "Explain my mistakes" are sent as the next message's `uiAction`.
 - **Rendering.** `FigureView` is a WebView with JavaScript on and every network request blocked. A figure can only use what is inside its own HTML file.
 - **Offline.** Chats and figure records are stored on the phone in the server's JSON format (`offline/`). `/sync` brings in changes and deletions made elsewhere whenever the app starts or the connection returns. Without a connection, saved chats and figures still open; asking new questions needs a connection. Signing out wipes the phone's copy.
