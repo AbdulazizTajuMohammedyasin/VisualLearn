@@ -1,6 +1,7 @@
 package com.visuallearn.app.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -63,6 +64,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -245,9 +247,27 @@ private fun MessageList(
     onRetry: () -> Unit,
 ) {
     val listState = rememberLazyListState()
+    // Stay pinned to the bottom until the user scrolls away; scrolling back down pins it again.
+    var follow by remember { mutableStateOf(true) }
+    LaunchedEffect(listState) {
+        listState.interactionSource.interactions.collect { if (it is DragInteraction.Start) follow = false }
+    }
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.isScrollInProgress }
+            .collect { scrolling -> if (!scrolling && !listState.canScrollForward) follow = true }
+    }
     val lastLength = messages.lastOrNull()?.parts?.sumOf { (it as? Part.Text)?.text?.length ?: 1 } ?: 0
+    LaunchedEffect(messages.size) { follow = true }
     LaunchedEffect(messages.size, lastLength) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex, Int.MAX_VALUE / 2)
+        if (messages.isNotEmpty() && follow) listState.animateScrollToItem(messages.lastIndex, Int.MAX_VALUE / 2)
+    }
+    // Interactive parts and figure cards grow after they load, without any change to the text.
+    LaunchedEffect(listState) {
+        snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.size }
+            .collect {
+                val last = listState.layoutInfo.totalItemsCount - 1
+                if (follow && last >= 0 && listState.canScrollForward) listState.scrollToItem(last, Int.MAX_VALUE / 2)
+            }
     }
     LazyColumn(
         state = listState,
