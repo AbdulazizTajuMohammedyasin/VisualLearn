@@ -3,7 +3,11 @@
 set -eu
 
 NODE_VERSION=v22.23.4
-NODE_SHA256=c9057c6a3b8fbb9651ed115c1e96d4a7281b7b9c9ca89fa05865c98ed7ffd437
+case "$(dpkg --print-architecture)" in
+    armhf) NODE_ARCH=armv7l; NODE_SHA256=c9057c6a3b8fbb9651ed115c1e96d4a7281b7b9c9ca89fa05865c98ed7ffd437 ;;
+    arm64) NODE_ARCH=arm64;  NODE_SHA256=6287aa46b6c375d816e63ae66d024fbbfd70404825aabdfdf898a970871d2f4b ;;
+    *) echo "unsupported architecture"; exit 1 ;;
+esac
 ANATOMY_REPO=https://github.com/wheresryan22/anatomy.git
 ANATOMY_COMMIT=1482e8469b0a9e0d8cc18ea2740a01423d29ae80
 
@@ -32,7 +36,7 @@ apt-get clean
 
 if [ "$(/opt/node/bin/node -v 2>/dev/null || true)" != "$NODE_VERSION" ]; then
     step "Node.js $NODE_VERSION"
-    tarball="node-$NODE_VERSION-linux-armv7l.tar.xz"
+    tarball="node-$NODE_VERSION-linux-$NODE_ARCH.tar.xz"
     curl -fsSL -o "/tmp/$tarball" "https://nodejs.org/dist/$NODE_VERSION/$tarball"
     echo "$NODE_SHA256  /tmp/$tarball" | sha256sum -c -
     rm -rf /opt/node && mkdir -p /opt/node

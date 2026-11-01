@@ -12,7 +12,8 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * A Debian 12 (armhf) userland run through proot from the app's private storage.
+ * A Debian 12 userland (armhf, or arm64 on 64-bit processes) run through proot from
+ * the app's private storage.
  *
  * proot is Termux's build (packages.termux.dev, proot 5.1.107.101) with its NEEDED
  * entry patched from libtalloc.so.2 to libtalloc.so so Android extracts it as a
@@ -40,16 +41,17 @@ class LinuxEnv(private val context: Context) {
     suspend fun installRootfs(log: (String) -> Unit) = withContext(Dispatchers.IO) {
         baseDir.mkdirs()
         val archive = File(baseDir, "rootfs.tar.xz")
-        if (!archive.exists() || sha256(archive) != ROOTFS_SHA256) {
+        val spec = rootfsSpec
+        if (!archive.exists() || sha256(archive) != spec.sha256) {
             log("Downloading Debian 12 rootfs…")
-            download(ROOTFS_URL, archive, log)
+            download(spec.url, archive, log)
             val sum = sha256(archive)
-            check(sum == ROOTFS_SHA256) { "rootfs checksum mismatch: $sum" }
+            check(sum == spec.sha256) { "rootfs checksum mismatch: $sum" }
         }
         log("Extracting…")
         rootfs.deleteRecursively()
         rootfs.mkdirs()
-        extractTarXz(archive, rootfs, stripPrefix = "debian-bookworm-arm/", log)
+        extractTarXz(archive, rootfs, stripPrefix = spec.topDir, log)
         archive.delete()
 
         configure()
@@ -235,10 +237,23 @@ class LinuxEnv(private val context: Context) {
         return -1
     }
 
+    /** Debian 12 rootfs for the ABI this process runs as. */
+    private data class Rootfs(val url: String, val sha256: String, val topDir: String)
+
+    private val rootfsSpec: Rootfs
+        get() = if (android.os.Process.is64Bit()) ROOTFS_ARM64 else ROOTFS_ARMHF
+
     companion object {
-        const val ROOTFS_URL =
-            "https://github.com/termux/proot-distro/releases/download/v4.17.3/debian-bookworm-arm-pd-v4.17.3.tar.xz"
-        const val ROOTFS_SHA256 = "85861ab139d4042302796cf46a93a9efbcb4808c06f7a1ae5fb71812f4564424"
+        private val ROOTFS_ARMHF = Rootfs(
+            url = "https://github.com/termux/proot-distro/releases/download/v4.17.3/debian-bookworm-arm-pd-v4.17.3.tar.xz",
+            sha256 = "85861ab139d4042302796cf46a93a9efbcb4808c06f7a1ae5fb71812f4564424",
+            topDir = "debian-bookworm-arm/",
+        )
+        private val ROOTFS_ARM64 = Rootfs(
+            url = "https://github.com/termux/proot-distro/releases/download/v4.17.3/debian-bookworm-aarch64-pd-v4.17.3.tar.xz",
+            sha256 = "3a841a794ae5999b33e33b329582ed0379d4f54ca62c6ce5a8eb9cff5ef8900b",
+            topDir = "debian-bookworm-aarch64/",
+        )
 
         private val FAKE_PROC = mapOf(
             "loadavg" to "0.12 0.07 0.02 2/165 765\n",
