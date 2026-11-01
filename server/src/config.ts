@@ -29,6 +29,9 @@ export interface Config {
   figureTimeoutMs: number;
   /** Development runner: time per stage. */
   devFigureStageMs: number;
+  /** SMTP server for sign-in codes, e.g. smtps://user:pass@smtp.example.com:465; empty logs codes instead. */
+  smtpUrl: string;
+  mailFrom: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -53,5 +56,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     openCodeBin: env.VL_OPENCODE_BIN ?? "opencode",
     figureTimeoutMs: Number(env.VL_FIGURE_TIMEOUT_MIN ?? 120) * 60_000,
     devFigureStageMs: Number(env.VL_DEV_FIGURE_STAGE_MS ?? 4000),
+    smtpUrl: env.VL_SMTP_URL ?? "",
+    mailFrom: env.VL_MAIL_FROM ?? "VisualLearn <no-reply@visuallearn.app>",
   };
 }

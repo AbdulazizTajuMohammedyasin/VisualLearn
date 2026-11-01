@@ -5,6 +5,7 @@ import { consoleMailer, googleVerifier } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { Figures } from "./figures.ts";
+import { smtpMailer } from "./mail.ts";
 import { ModelRegistry } from "./models.ts";
 import { chatSystemPrompt } from "./prompt.ts";
 import { DevRunner, OpenCodeRunner, RoutedRunner } from "./runners.ts";
@@ -23,8 +24,8 @@ const deps: Deps = {
   config,
   db,
   now: Date.now,
-  // Sign-in codes are logged until a mail provider is configured.
-  mailer: consoleMailer((m) => log(m)),
+  // Without SMTP, sign-in codes are only logged: fine for development, useless in production.
+  mailer: config.smtpUrl ? smtpMailer(config.smtpUrl, config.mailFrom) : consoleMailer((m) => log(m)),
   google: googleVerifier(config.googleClientId),
   models,
   figures: null,
@@ -36,6 +37,7 @@ const deps: Deps = {
 deps.figures = new Figures(deps, { workers: config.figureWorkers, runner, pagesDir: join(config.dataDir, "pages") });
 const app = await buildApp(deps, { logger: true });
 log = (m) => app.log.info(m);
+if (!config.smtpUrl && !config.devAuth) app.log.warn("VL_SMTP_URL isn't set: sign-in codes are only written to this log, so email sign-in won't work for users.");
 if (!existsSync(config.uiPromptFile)) app.log.warn(`No OpenUI prompt at ${config.uiPromptFile}; run "npm run prompt" in ui-library. Replies will be text only.`);
 
 await app.listen({ port: config.port, host: config.host });

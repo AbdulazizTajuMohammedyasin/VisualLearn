@@ -39,6 +39,8 @@ npm run typecheck
 | `VL_PUBLIC_URL` | `http://localhost:PORT` | Base of the signed page links the app downloads. |
 | `VL_SIGNING_SECRET` | none | Signs access tokens and page links. Required unless `VL_DEV_AUTH=1`. |
 | `VL_DEV_AUTH` | off | Development only: accepts code `123456` and logs codes. |
+| `VL_SMTP_URL` | empty | SMTP for sign-in codes, e.g. `smtps://user:pass@smtp.postmarkapp.com:465`; empty logs codes instead. |
+| `VL_MAIL_FROM` | `VisualLearn <no-reply@visuallearn.app>` | Sender of sign-in emails. |
 | `VL_GOOGLE_CLIENT_ID` | empty | OAuth web client ID for Sign in with Google; empty turns Google sign-in off. |
 | `VL_ADMIN_EMAILS` | empty | Comma-separated emails that get the admin role on sign-in. |
 | `VL_FIGURE_WORKERS` | `2` | Figure jobs running at once. |
@@ -47,6 +49,7 @@ npm run typecheck
 | `VL_FIGURE_TIMEOUT_MIN` | `120` | A figure job is stopped after this long. |
 | `VL_UI_PROMPT` | `../ui-library/dist/system-prompt.md` | The OpenUI prompt from `npm run prompt`. |
 | `VL_MIN_UI_LIBRARY` | `1.0.0` | Apps reporting an older UI library get `426`. |
+| `VL_RATE_AUTH_PER_MIN`, `VL_RATE_REQUESTS_PER_MIN`, `VL_RATE_WORK_PER_MIN` | `30`, `600`, `30` | Abuse limits: sign-in calls per IP, requests per user, and new messages or figures per user. |
 
 ## Choosing models
 
@@ -70,7 +73,7 @@ Local models use `"kind":"local","npm":"@ai-sdk/openai-compatible","baseUrl":"ht
 
 ## Before production
 
-- **Email:** sign-in codes are only logged. Wire `Mailer` (`src/auth.ts`) to a transactional email service such as SES, Postmark or Resend.
+- **Email:** set `VL_SMTP_URL` to a transactional email service such as SES, Postmark or Resend. Without it, sign-in codes are only logged.
 - **Push:** "figure ready" notifications through Firebase Cloud Messaging aren't built. The app finds out from the live stream and sync.
 - **Scale:** SQLite and the in-process queue suit one server. Moving past that means Postgres and a shared queue (spec section 11).
 - **Isolation:** each figure job should run in its own container, not just its own folder.
