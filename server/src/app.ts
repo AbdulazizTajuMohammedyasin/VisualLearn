@@ -1,8 +1,10 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { authRoutes, publicUser, requireUser, type GoogleVerifier, type Mailer } from "./auth.ts";
+import { ChatEngine, chatRoutes } from "./chat.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { ApiError } from "./errors.ts";
+import type { ModelRegistry } from "./models.ts";
 import { compareVersions } from "./util.ts";
 
 /** Deletes an account and everything it owns (section 3, required by Google Play). */
@@ -18,11 +20,25 @@ export interface Deps {
   now: () => number;
   mailer: Mailer;
   google: GoogleVerifier | null;
+  models: ModelRegistry;
+  /** Starts figure jobs for chat replies; null until the figure workers exist. */
+  figures: FigureService | null;
+  /** The model's instructions, including the OpenUI component library (ui-library/dist/system-prompt.md). */
+  chatSystemPrompt: string;
+  /** The OpenUI library version programs are written for. */
+  uiLibraryVersion: string;
+  log: (message: string) => void;
+}
+
+export interface FigureService {
+  /** Queues a figure job and returns its id. */
+  create(userId: string, prompt: string, conversationId: string | null): string;
 }
 
 /** Builds the HTTP app. Every route lives under /v1 (section 2). */
 export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1_000_000 });
+  const chat = new ChatEngine(deps);
 
   app.setErrorHandler((error, request, reply) => {
     if (error instanceof ApiError) {
@@ -64,6 +80,8 @@ export async function buildApp(deps: Deps, options: { logger?: boolean } = {}): 
           deleteUser(deps, request.user.id);
           return reply.code(202).send();
         });
+
+        chatRoutes(authed, deps, chat);
       });
     },
     { prefix: "/v1" },

@@ -3,6 +3,8 @@ import type { GoogleVerifier } from "../src/auth.ts";
 import { buildApp, type Deps } from "../src/app.ts";
 import { loadConfig } from "../src/config.ts";
 import { openDb } from "../src/db.ts";
+import { ModelRegistry } from "../src/models.ts";
+import { chatSystemPrompt } from "../src/prompt.ts";
 
 export interface TestServer {
   app: FastifyInstance;
@@ -17,12 +19,18 @@ export async function testServer(env: Record<string, string> = {}, google: Googl
   const clock = { now: Date.parse("2026-11-01T12:00:00Z") };
   const mail = new Map<string, string>();
   const config = loadConfig({ VL_DEV_AUTH: "1", VL_DATA_DIR: ":memory:", ...env });
+  const db = openDb(":memory:");
   const deps: Deps = {
     config,
-    db: openDb(":memory:"),
+    db,
     now: () => clock.now,
     mailer: { sendSignInCode: async (email, code) => void mail.set(email, code) },
     google,
+    models: new ModelRegistry(db),
+    figures: null,
+    chatSystemPrompt: chatSystemPrompt(null),
+    uiLibraryVersion: "1.0.0",
+    log: () => {},
   };
   const app = await buildApp(deps);
   return { app, deps, clock, mail };

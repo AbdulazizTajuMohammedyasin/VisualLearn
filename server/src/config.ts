@@ -18,6 +18,9 @@ export interface Config {
   minUiLibraryVersion: string;
   /** Development only: accept the email code 123456 and log codes instead of sending them. */
   devAuth: boolean;
+  /** The ui-library's generated prompt (npm run prompt) and the version it describes. */
+  uiPromptFile: string;
+  uiLibraryVersion: string;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -35,5 +38,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     adminEmails: (env.VL_ADMIN_EMAILS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
     minUiLibraryVersion: env.VL_MIN_UI_LIBRARY ?? "1.0.0",
     devAuth,
+    uiPromptFile: env.VL_UI_PROMPT ?? join(process.cwd(), "..", "ui-library", "dist", "system-prompt.md"),
+    uiLibraryVersion: env.VL_UI_LIBRARY_VERSION ?? "1.0.0",
   };
 }
