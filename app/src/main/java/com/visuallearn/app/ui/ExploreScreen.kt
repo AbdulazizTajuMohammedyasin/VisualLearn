@@ -1,7 +1,7 @@
 package com.visuallearn.app.ui
 
 import android.content.Intent
-import android.net.Uri
+import androidx.core.net.toUri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -209,7 +209,7 @@ fun GalleryFigureScreen(gallery: Gallery, figure: GalleryFigure, onBack: () -> U
             confirmButton = { TextButton(onClick = { showInfo = false }) { Text("Close") } },
             dismissButton = detail?.let { d ->
                 {
-                    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(d.sourceUrl))) }) {
+                    TextButton(onClick = { context.startActivity(Intent(Intent.ACTION_VIEW, d.sourceUrl.toUri())) }) {
                         Text("View source")
                     }
                 }

@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
+import androidx.core.content.edit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,16 +39,16 @@ class Settings(context: Context) {
     var apiKey: String?
         get() = prefs.getString(KEY_API, null)?.let(::decrypt)
         set(value) {
-            prefs.edit().apply {
+            prefs.edit {
                 if (value.isNullOrBlank()) remove(KEY_API) else putString(KEY_API, encrypt(value.trim()))
-            }.apply()
+            }
             _state.value = read()
         }
 
     var figureModel: FigureModel
         get() = FigureModel.entries.firstOrNull { it.id == prefs.getString(KEY_MODEL, null) } ?: FigureModel.OPUS
         set(value) {
-            prefs.edit().putString(KEY_MODEL, value.id).apply()
+            prefs.edit { putString(KEY_MODEL, value.id) }
             _state.value = read()
         }
 
@@ -55,7 +56,7 @@ class Settings(context: Context) {
     var setupSkipped: Boolean
         get() = prefs.getBoolean(KEY_SETUP_SKIPPED, false)
         set(value) {
-            prefs.edit().putBoolean(KEY_SETUP_SKIPPED, value).apply()
+            prefs.edit { putBoolean(KEY_SETUP_SKIPPED, value) }
             _state.value = read()
         }
 
@@ -63,7 +64,7 @@ class Settings(context: Context) {
     var darkFigures: Boolean?
         get() = if (prefs.contains(KEY_DARK)) prefs.getBoolean(KEY_DARK, true) else null
         set(value) {
-            prefs.edit().apply { if (value == null) remove(KEY_DARK) else putBoolean(KEY_DARK, value) }.apply()
+            prefs.edit { if (value == null) remove(KEY_DARK) else putBoolean(KEY_DARK, value) }
             _state.value = read()
         }
 
