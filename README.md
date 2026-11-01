@@ -13,8 +13,8 @@ The app is a thin client. All model calls and figure building happen on VisualLe
 | Figure jobs: progress, "Figure ready" notification, offline cache verified by sha256 | Done |
 | Explore: Anatomy community gallery | Done |
 | Settings, storage, licences | Done |
-| Queue position for figures ("3rd in line") | Next |
-| Offline read-only mode with `/sync` | Next |
+| Queue position for figures ("3rd in line") | Done |
+| Offline read-only mode, kept up to date with `/sync` | Done |
 | Interactive parts (flashcards, quizzes) with [OpenUI](https://github.com/thesysdev/openui) | Placeholder card for now |
 | Server | Not built yet. Debug builds use an in-app fake server |
 
@@ -77,6 +77,7 @@ Release signing reads from environment variables, so no secrets go in the repo: 
 - **Chat.** A reply is a list of parts: `text` (Markdown), `figure` (a figure job id) and `ui` (an OpenUI Lang program). They stream over Server-Sent Events, and the stream resumes with `Last-Event-ID` after a dropped connection.
 - **Figures.** A figure is a server job. The app follows its progress, and when it finishes the app downloads the dark and light HTML pages. It checks each page's sha256 and keeps a copy on the phone, so a figure that has loaded once opens without a connection.
 - **Rendering.** `FigureView` is a WebView with JavaScript on and every network request blocked. A figure can only use what is inside its own HTML file.
+- **Offline.** Chats and figure records are stored on the phone in the server's JSON format (`offline/`). `/sync` brings in changes and deletions made elsewhere whenever the app starts or the connection returns. Without a connection, saved chats and figures still open; asking new questions needs a connection. Signing out wipes the phone's copy.
 - **Sessions.** Tokens are encrypted with an Android Keystore key and refreshed on a 401.
 
 The full contract, including scheduling, sync, the admin API and retention, is in [docs/server-api.md](docs/server-api.md).
@@ -90,6 +91,7 @@ app/src/main/java/com/visuallearn/app/
   chat/       ChatRepository: conversations and streaming
   figures/    FiguresRepository: jobs, downloads, page cache, notifications
   figure/     FigureView: sandboxed WebView
+  offline/    OfflineStore, Connectivity, SyncManager
   gallery/    Explore gallery from anatomy-community
   settings/   User preferences
   ui/         Compose screens
