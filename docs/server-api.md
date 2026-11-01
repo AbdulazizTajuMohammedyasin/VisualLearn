@@ -285,10 +285,12 @@ Deletions reach users' phones through sync (section 7).
 
 ## 11. Server architecture
 
-- API service (stateless) + Postgres (users, conversations, messages, figures, routing) + object storage (pages, previews) + a job queue with fair-share ordering.
-- Figure workers run each job in its own container: Node 22, Chromium, the Anatomy skill pinned to a commit, and OpenCode (`opencode run --format json --auto`, with stdin closed or it waits for input). The Anatomy skill is linked into `~/.config/opencode/skills/anatomy`; custom tools `report_progress` and `finish` (`~/.config/opencode/tools/`) report stages and deliver pages, the contract proven in the on-device prototype (tag `on-device-poc`).
-- Chat runs the routed model with the OpenUI system prompt and a `create_figure` tool that starts a figure job.
-- Email codes need a transactional email service (e.g. Amazon SES, Postmark or Resend).
+Built in `server/` (see its README):
+
+- One Node 24 service (Fastify). SQLite holds users, conversations, messages, stream events, figures, routing and the audit log. Finished pages are files addressed by sha256. This suits a single server; scaling out means Postgres, object storage and a shared queue.
+- Figure workers are an in-process pool (`VL_FIGURE_WORKERS`) fed by the fair-share queue. Each job gets its own folder with an OpenCode config generated from the routing (`XDG_CONFIG_HOME`), the Anatomy skill, and the custom tools `report_progress` and `finish`. It runs `opencode run --format json --auto` with stdin closed. Production should put each job in its own container with Node 22+ and Chromium.
+- Chat streams the routed model through the Vercel AI SDK, with the OpenUI system prompt from `ui-library` and a `create_figure` tool that starts a figure job. Interactive parts are written as fenced `openui` blocks, which the server splits into `ui` parts.
+- Email codes need a transactional email service (e.g. Amazon SES, Postmark or Resend); until one is wired in, the server logs them.
 
 ## 12. Decisions (2026-11-01)
 

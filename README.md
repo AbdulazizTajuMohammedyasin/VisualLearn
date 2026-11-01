@@ -2,7 +2,7 @@
 
 An Android chat app for learning. Ask a question and get an answer. When an idea is easier to understand by seeing it, VisualLearn builds a working, interactive figure of it: a pin tumbler lock you can turn, a rate limiter you can flood, a cache you can miss. Figures are made with [Anatomy](https://github.com/wheresryan22/anatomy) and shown in a sandboxed WebView.
 
-The app is a thin client. All model calls and figure building happen on VisualLearn's servers; the phone signs in, streams chat, and renders what the server made.
+The app is a thin client. All model calls and figure building happen on the VisualLearn server in [server/](server/); the phone signs in, streams chat, and renders what the server made.
 
 ## Status
 
@@ -16,7 +16,7 @@ The app is a thin client. All model calls and figure building happen on VisualLe
 | Queue position for figures ("3rd in line") | Done |
 | Offline read-only mode, kept up to date with `/sync` | Done |
 | Interactive parts with [OpenUI](https://github.com/thesysdev/openui): quizzes, flashcards, step-by-step explainers | Done |
-| Server | Not built yet. Debug builds use an in-app fake server |
+| Server ([server/](server/)): auth, chat streaming, figure queue with OpenCode workers, sync, admin API | Done; email delivery and push not wired yet |
 
 ## Requirements
 
@@ -78,7 +78,7 @@ Release signing reads from environment variables, so no secrets go in the repo: 
 ## How it works
 
 ```
- Phone (this repo)                         Server (planned)
+ Phone (app/)                              Server (server/)
  ┌──────────────────────────┐   HTTPS     ┌─────────────────────────────┐
  │ Compose UI               │  REST+SSE   │ API: auth, chat, figures,   │
  │ ChatRepository  ─────────┼────────────►│      sync, admin            │
@@ -114,6 +114,7 @@ app/src/main/java/com/visuallearn/app/
 app/src/debug/    FakeApi, sample figures, debug Backend
 app/src/release/  release Backend (always HttpApi)
 ui-library/       OpenUI component library: app renderer and server prompt
+server/           API server (Node 24, Fastify, SQLite); see server/README.md
 docs/server-api.md
 ```
 
