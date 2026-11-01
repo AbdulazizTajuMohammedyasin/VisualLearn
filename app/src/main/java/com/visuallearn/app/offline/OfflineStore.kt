@@ -14,9 +14,10 @@ import java.io.File
  * The phone's copy of the user's chats and figure records, so they can be read without
  * a connection. Stored as the server's own JSON; figure pages live in FiguresRepository's cache.
  */
-class OfflineStore(context: Context) {
+class OfflineStore(private val dir: File) {
 
-    private val dir = File(context.filesDir, "offline")
+    constructor(context: Context) : this(File(context.filesDir, "offline"))
+
     private val conversationsDir = File(dir, "conversations")
     private val summariesFile = File(dir, "conversations.json")
     private val figuresFile = File(dir, "figures.json")

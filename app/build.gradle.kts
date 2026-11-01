@@ -78,4 +78,8 @@ dependencies {
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.androidx.compose.material.icons.core)
+
+    testImplementation(libs.junit)
+    // Android's org.json is a stub on the JVM; tests use the real library.
+    testImplementation(libs.org.json)
 }

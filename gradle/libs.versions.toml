@@ -11,8 +11,12 @@ credentials = "1.6.0"
 googleid = "1.2.1"
 fragment = "1.9.1"
 materialIcons = "1.7.8"
+junit = "4.13.2"
+orgJson = "20260814"
 
 [libraries]
+junit = { module = "junit:junit", version.ref = "junit" }
+org-json = { module = "org.json:json", version.ref = "orgJson" }
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "coreKtx" }
 androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
 androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycle" }

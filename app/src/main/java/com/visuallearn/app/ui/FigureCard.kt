@@ -141,7 +141,7 @@ private fun queueLabel(figure: Figure): String {
     return "$place · $eta"
 }
 
-private fun ordinal(n: Int): String {
+internal fun ordinal(n: Int): String {
     val suffix = if (n % 100 in 11..13) "th" else when (n % 10) {
         1 -> "st"
         2 -> "nd"
