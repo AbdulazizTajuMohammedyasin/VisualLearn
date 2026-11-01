@@ -140,7 +140,7 @@ fun ChatScreen(
                         Column {
                             Text(state.title.ifBlank { "VisualLearn" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (!online) {
-                                Text("Offline · showing saved copy", style = MaterialTheme.typography.labelMedium,
+                                Text("Offline Â· showing saved copy", style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }

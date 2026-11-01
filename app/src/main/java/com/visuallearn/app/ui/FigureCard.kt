@@ -120,7 +120,7 @@ fun FigureCard(
     }
 }
 
-/** "3rd in line · starts in about 4 min", ticking down between server updates. */
+/** "3rd in line Â· starts in about 4 min", ticking down between server updates. */
 @Composable
 private fun queueLabel(figure: Figure): String {
     val position = figure.queuePosition ?: return "Queued"
@@ -138,7 +138,7 @@ private fun queueLabel(figure: Figure): String {
         minutes < 60 -> "starts in about $minutes min"
         else -> "starts in about ${(minutes + 30) / 60} h"
     }
-    return "$place · $eta"
+    return "$place Â· $eta"
 }
 
 private fun ordinal(n: Int): String {
