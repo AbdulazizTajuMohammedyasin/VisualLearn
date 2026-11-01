@@ -51,6 +51,10 @@ data class Figure(
     val id: String,
     val prompt: String,
     val status: FigureStatus,
+    /** 1 = next to start; set only while queued. */
+    val queuePosition: Int?,
+    /** Server's estimate, recomputed as capacity changes; set only while queued. */
+    val estimatedStartAt: String?,
     val stage: String?,
     val message: String?,
     val progress: Double?,
@@ -58,6 +62,7 @@ data class Figure(
     val summary: String?,
     val conversationId: String?,
     val createdAt: String,
+    val updatedAt: String,
     val startedAt: String?,
     val finishedAt: String?,
     val error: ApiError?,

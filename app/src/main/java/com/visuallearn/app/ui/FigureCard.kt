@@ -20,12 +20,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.visuallearn.app.api.Figure
 import com.visuallearn.app.api.FigureStatus
+import kotlinx.coroutines.delay
+import java.time.Duration
+import java.time.Instant
 
 @Composable
 fun FigureCard(
@@ -69,7 +74,7 @@ fun FigureCard(
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            figure.stage?.replaceFirstChar(Char::uppercase) ?: "Queued",
+                            figure.stage?.replaceFirstChar(Char::uppercase) ?: queueLabel(figure),
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f),
@@ -113,4 +118,35 @@ fun FigureCard(
             }
         }
     }
+}
+
+/** "3rd in line · starts in about 4 min", ticking down between server updates. */
+@Composable
+private fun queueLabel(figure: Figure): String {
+    val position = figure.queuePosition ?: return "Queued"
+    val now by produceState(Instant.now()) {
+        while (true) {
+            delay(15_000)
+            value = Instant.now()
+        }
+    }
+    val place = if (position <= 1) "Next in line" else "${ordinal(position)} in line"
+    val start = figure.estimatedStartAt?.let { runCatching { Instant.parse(it) }.getOrNull() } ?: return place
+    val minutes = Duration.between(now, start).toMinutes()
+    val eta = when {
+        minutes < 1 -> "starts in under a minute"
+        minutes < 60 -> "starts in about $minutes min"
+        else -> "starts in about ${(minutes + 30) / 60} h"
+    }
+    return "$place · $eta"
+}
+
+private fun ordinal(n: Int): String {
+    val suffix = if (n % 100 in 11..13) "th" else when (n % 10) {
+        1 -> "st"
+        2 -> "nd"
+        3 -> "rd"
+        else -> "th"
+    }
+    return "$n$suffix"
 }

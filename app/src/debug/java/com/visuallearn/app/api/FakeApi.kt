@@ -21,7 +21,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     private val figures = ConcurrentHashMap<String, FakeFigure>()
     private val pendingReplies = ConcurrentHashMap<String, Script>()
 
-    private data class FakeFigure(val figure: Figure, val startedAtMs: Long, var cancelled: Boolean = false)
+    private data class FakeFigure(val figure: Figure, val startedAtMs: Long, var cancelledAt: String? = null)
     private data class Script(val conversationId: String, val text: String, val mode: SendMode)
 
     @Volatile private var email: String = "dev@visuallearn.invalid"
@@ -147,7 +147,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     }
 
     override suspend fun cancelFigure(id: String): Figure {
-        figures[id]?.cancelled = true
+        figures[id]?.cancelledAt = now()
         return figure(id)
     }
 
@@ -167,36 +167,49 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     }
 
     private fun startFigure(prompt: String, conversationId: String?): Figure {
+        val now = now()
         val f = Figure(
-            id = "fig_" + uuid(), prompt = prompt, status = FigureStatus.QUEUED, stage = null, message = "Waiting for a worker…",
-            progress = 0.0, title = null, summary = null, conversationId = conversationId, createdAt = now(),
-            startedAt = null, finishedAt = null, error = null, darkPage = null, lightPage = null, previewUrl = null,
+            id = "fig_" + uuid(), prompt = prompt, status = FigureStatus.QUEUED, queuePosition = JOBS_AHEAD,
+            estimatedStartAt = null, stage = null, message = "Waiting for a free worker.", progress = null, title = null,
+            summary = null, conversationId = conversationId, createdAt = now, updatedAt = now, startedAt = null,
+            finishedAt = null, error = null, darkPage = null, lightPage = null, previewUrl = null,
         )
         figures[f.id] = FakeFigure(f, System.currentTimeMillis())
-        return f
+        return current(f.id)
     }
 
-    /** Derives the job's state from elapsed time: about 4 s per stage. */
+    /**
+     * Derives the job's state from elapsed time: it waits behind [JOBS_AHEAD] other jobs
+     * ([QUEUE_SECONDS] in all), then spends [STAGE_SECONDS] on each stage.
+     */
     private fun current(id: String): Figure {
         val fake = figures.getValue(id)
-        val base = fake.figure
-        if (fake.cancelled) return base.copy(status = FigureStatus.CANCELLED, message = "Cancelled", finishedAt = now())
+        val queued = fake.figure
+        val base = queued.copy(queuePosition = null)
+        fun at(seconds: Double) = Instant.ofEpochMilli(fake.startedAtMs + (seconds * 1000).toLong()).toString()
+        fake.cancelledAt?.let { return base.copy(status = FigureStatus.CANCELLED, message = "Cancelled", finishedAt = it, updatedAt = it) }
         val elapsed = (System.currentTimeMillis() - fake.startedAtMs) / 1000.0
-        val stageIndex = ((elapsed - 2) / STAGE_SECONDS).toInt()
+        val perJob = QUEUE_SECONDS / JOBS_AHEAD
+        val stageIndex = ((elapsed - QUEUE_SECONDS) / STAGE_SECONDS).toInt()
         return when {
-            elapsed < 2 -> base
+            elapsed < QUEUE_SECONDS -> {
+                val done = (elapsed / perJob).toInt()
+                queued.copy(queuePosition = JOBS_AHEAD - done, estimatedStartAt = at(QUEUE_SECONDS), updatedAt = at(done * perJob))
+            }
             stageIndex < STAGES.size -> base.copy(
                 status = FigureStatus.RUNNING,
                 stage = STAGES[stageIndex].first,
                 message = STAGES[stageIndex].second,
                 progress = (stageIndex + 1.0) / (STAGES.size + 1),
-                startedAt = base.createdAt,
+                startedAt = at(QUEUE_SECONDS),
+                updatedAt = at(QUEUE_SECONDS + stageIndex * STAGE_SECONDS),
             )
             else -> base.copy(
                 status = FigureStatus.SUCCEEDED, stage = "polish", message = "Finished", progress = 1.0,
                 title = "Dial indicator on gauge blocks",
                 summary = "Example figure from the fake server: a dial gauge on a stand reads three gauge blocks as the carriage slides under its plunger.",
-                startedAt = base.createdAt, finishedAt = now(),
+                startedAt = at(QUEUE_SECONDS), finishedAt = at(QUEUE_SECONDS + STAGES.size * STAGE_SECONDS),
+                updatedAt = at(QUEUE_SECONDS + STAGES.size * STAGE_SECONDS),
                 darkPage = page("fake/dial-indicator.html"), lightPage = page("fake/dial-indicator-light.html"),
             )
         }
@@ -216,6 +229,8 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
         const val FAKE_CODE = "123456"
         const val UI_LIBRARY_VERSION = "1.0.0"
         const val STAGE_SECONDS = 4.0
+        const val QUEUE_SECONDS = 9.0
+        const val JOBS_AHEAD = 3
         val STAGES = listOf(
             "research" to "Collecting the real sizes and readings.",
             "design" to "Choosing a machine whose working is the idea.",
