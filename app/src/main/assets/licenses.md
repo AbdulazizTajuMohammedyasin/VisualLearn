@@ -14,6 +14,8 @@ VisualLearn is built on the work of these projects. Thank you.
 
 **Sign in with Google (Credential Manager, Google Identity)**: Apache License 2.0.
 
+**Geist** typeface by The Geist Project Authors (Vercel): SIL Open Font License 1.1, https://github.com/vercel/geist-font
+
 ## Interactive parts
 
 Quizzes, flashcards and step-by-step explanations are drawn with a bundled page built from:

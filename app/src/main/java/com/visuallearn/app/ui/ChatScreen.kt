@@ -1,9 +1,12 @@
 package com.visuallearn.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -11,12 +14,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -26,18 +34,15 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +56,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
@@ -68,10 +74,15 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role as SemanticsRole
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.visuallearn.app.api.Figure
 import com.visuallearn.app.api.Message
 import com.visuallearn.app.api.MessageStatus
 import com.visuallearn.app.api.Part
@@ -81,6 +92,7 @@ import com.visuallearn.app.chat.ChatRepository
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.openui.OpenUiView
 import kotlinx.coroutines.launch
+import java.io.File
 
 private val SUGGESTIONS = listOf(
     "How does a pin tumbler lock open?",
@@ -103,6 +115,7 @@ fun ChatScreen(
     val state by chat.state.collectAsStateWithLifecycle()
     val summaries by chat.summaries.collectAsStateWithLifecycle()
     val figureMap by figures.figures.collectAsStateWithLifecycle()
+    val previews by figures.previews.collectAsStateWithLifecycle()
     val darkTheme = isSystemInDarkTheme()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -111,8 +124,8 @@ fun ChatScreen(
     ModalNavigationDrawer(
         drawerState = drawer,
         drawerContent = {
-            ModalDrawerSheet(Modifier.widthIn(max = 320.dp)) {
-                Text("VisualLearn", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 24.dp, top = 20.dp, bottom = 12.dp))
+            ModalDrawerSheet(Modifier.widthIn(max = 320.dp), drawerContainerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                Text("VisualLearn", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(start = 28.dp, top = 24.dp, bottom = 16.dp))
                 DrawerItem("New chat", Icons.Filled.Add) { chat.newChat(); closeDrawer() }
                 DrawerItem("Explore figures", Icons.Filled.Search) { closeDrawer(); onOpenExplore() }
                 DrawerItem("My figures", Icons.Filled.Star) { closeDrawer(); onOpenFigures() }
@@ -144,9 +157,10 @@ fun ChatScreen(
                 TopAppBar(
                     title = {
                         Column {
-                            Text(state.title.ifBlank { "VisualLearn" }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(state.title.ifBlank { "VisualLearn" }, style = MaterialTheme.typography.titleMedium,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                             if (!online) {
-                                Text("Offline · showing saved copy", style = MaterialTheme.typography.labelMedium,
+                                Text("Offline, showing the saved copy", style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
@@ -160,12 +174,25 @@ fun ChatScreen(
                 Box(Modifier.weight(1f)) {
                     when {
                         state.loading && state.messages.isEmpty() -> LinearProgressIndicator(Modifier.fillMaxWidth())
-                        state.messages.isEmpty() -> EmptyState(enabled = online) { chat.send(it, SendMode.AUTO) }
+                        state.messages.isEmpty() -> EmptyState(
+                            enabled = online,
+                            recent = figureMap.values.sortedByDescending { it.createdAt }.take(8),
+                            previews = previews,
+                            onOpenFigure = onOpenFigure,
+                            onOpenFigures = onOpenFigures,
+                            onSuggestion = { chat.send(it, SendMode.AUTO) },
+                        )
                         else -> MessageList(
                             messages = state.messages,
                             figureCard = { id ->
                                 figureMap[id]?.let { figure ->
-                                    FigureCard(figure, onOpen = { onOpenFigure(id) }, onCancel = { figures.cancel(id) }, onRetry = { figures.retry(id) })
+                                    FigurePlate(
+                                        figure,
+                                        preview = previews[id],
+                                        onOpen = { onOpenFigure(id) },
+                                        onCancel = { figures.cancel(id) },
+                                        onRetry = { figures.retry(id) },
+                                    )
                                 }
                             },
                             uiPart = { m, index, part ->
@@ -215,27 +242,64 @@ private fun DrawerItem(label: String, icon: androidx.compose.ui.graphics.vector.
     )
 }
 
+/** A new chat: what the app does, the figures made so far, and questions to start from. */
 @Composable
-private fun EmptyState(enabled: Boolean, onSuggestion: (String) -> Unit) {
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(Icons.Filled.Home, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.secondary)
-        Spacer(Modifier.height(12.dp))
-        Text("What should we take apart today?", style = MaterialTheme.typography.headlineSmall, textAlign = TextAlign.Center)
-        Spacer(Modifier.height(8.dp))
-        Text(
-            "Ask anything. When an idea needs seeing, VisualLearn builds a working figure of it.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center,
-        )
-        Spacer(Modifier.height(20.dp))
-        SUGGESTIONS.forEach { s ->
-            AssistChip(onClick = { onSuggestion(s) }, label = { Text(s) }, enabled = enabled, modifier = Modifier.padding(vertical = 2.dp))
+private fun EmptyState(
+    enabled: Boolean,
+    recent: List<Figure>,
+    previews: Map<String, File>,
+    onOpenFigure: (String) -> Unit,
+    onOpenFigures: () -> Unit,
+    onSuggestion: (String) -> Unit,
+) {
+    // Sits at the bottom, near the thumb and the composer; scrolls on short screens.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = maxHeight).padding(vertical = 16.dp),
+            verticalArrangement = Arrangement.Bottom,
+        ) {
+            TwoLineHeading(
+                "See how things work.",
+                "Ask, and watch it get built.",
+                Modifier.padding(horizontal = 24.dp),
+            )
+            if (recent.isNotEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 28.dp, bottom = 4.dp),
+                ) {
+                    Text("Your figures", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onOpenFigures) { Text("See all") }
+                }
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(recent, key = { it.id }) { f ->
+                        FigureTile(f, previews[f.id], onClick = { onOpenFigure(f.id) }, modifier = Modifier.width(196.dp))
+                    }
+                }
+            }
+            Column(
+                Modifier.padding(start = 24.dp, end = 24.dp, top = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SUGGESTIONS.forEach { s -> SuggestionBubble(s, enabled) { onSuggestion(s) } }
+            }
         }
+    }
+}
+
+/** A question to start from, shaped like a message you could send. */
+@Composable
+private fun SuggestionBubble(text: String, enabled: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 16.dp, vertical = 11.dp))
     }
 }
 
@@ -304,8 +368,8 @@ private fun MessageList(
 private fun UserBubble(text: String) {
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
         Surface(
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            shape = RoundedCornerShape(20.dp, 20.dp, 6.dp, 20.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(22.dp),
             modifier = Modifier.widthIn(max = 320.dp),
         ) {
             Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
@@ -327,8 +391,8 @@ private fun TypingDots() {
 private fun OfflineNotice() {
     Surface(color = MaterialTheme.colorScheme.background) {
         Surface(
-            shape = RoundedCornerShape(26.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainer,
             modifier = Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp).fillMaxWidth(),
         ) {
             Text(
@@ -347,7 +411,11 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
     var figureMode by rememberSaveable { mutableStateOf(false) }
     Surface(color = MaterialTheme.colorScheme.background) {
         Column(Modifier.navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
-            Surface(shape = RoundedCornerShape(26.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+            Surface(
+                shape = RoundedCornerShape(28.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            ) {
                 Column(Modifier.padding(horizontal = 6.dp, vertical = 4.dp)) {
                     TextField(
                         value = text,
@@ -363,12 +431,7 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 8.dp, end = 2.dp, bottom = 2.dp)) {
-                        FilterChip(
-                            selected = figureMode,
-                            onClick = { figureMode = !figureMode },
-                            label = { Text("Figure") },
-                            leadingIcon = { Icon(Icons.Filled.Star, null, Modifier.size(16.dp)) },
-                        )
+                        FigureToggle(figureMode) { figureMode = !figureMode }
                         Spacer(Modifier.weight(1f))
                         if (streaming) {
                             FilledIconButton(onClick = onStop) { Icon(Icons.Filled.Close, "Stop") }
@@ -382,6 +445,25 @@ private fun Composer(streaming: Boolean, onSend: (String, Boolean) -> Unit, onSt
                     }
                 }
             }
+        }
+    }
+}
+
+/** Asks for a figure with the next message, even when the question doesn't mention one. */
+@Composable
+private fun FigureToggle(on: Boolean, onToggle: () -> Unit) {
+    Surface(
+        onClick = onToggle,
+        shape = CircleShape,
+        color = if (on) MaterialTheme.colorScheme.surfaceContainerHighest else Color.Transparent,
+        border = if (on) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier.semantics { role = SemanticsRole.Switch; stateDescription = if (on) "On" else "Off" },
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+            if (on) StatusDot(StatusColors.Building) else Box(Modifier.size(8.dp).border(1.dp, MaterialTheme.colorScheme.onSurfaceVariant, CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Text("Figure", style = MaterialTheme.typography.labelLarge,
+                color = if (on) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
