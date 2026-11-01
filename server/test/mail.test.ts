@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import nodemailer from "nodemailer";
+import nodemailer, { type SendMailOptions } from "nodemailer";
 import { smtpMailer } from "../src/mail.ts";
 
 test("the sign-in email carries the code in its subject and body", async () => {
   const sent: { envelope: { to: string[] }; message: string }[] = [];
   const transport = nodemailer.createTransport({ jsonTransport: true });
   const original = transport.sendMail.bind(transport);
-  transport.sendMail = (async (mail: nodemailer.SendMailOptions) => {
+  transport.sendMail = (async (mail: SendMailOptions) => {
     const info = await original(mail);
     sent.push(info as unknown as { envelope: { to: string[] }; message: string });
     return info;
