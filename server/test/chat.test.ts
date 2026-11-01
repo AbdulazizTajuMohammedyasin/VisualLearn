@@ -133,3 +133,18 @@ test("a second message waits for the current reply", async () => {
   const res = await server.app.inject({ method: "POST", url: `/v1/conversations/${conv.id}/messages`, headers, payload: { text: "Two" } });
   assert.equal(res.statusCode, 400);
 });
+
+test("after old events are pruned, a reconnect still ends with the stored message", async () => {
+  const server = await testServer();
+  const { headers } = await signIn(server);
+  const { assistantMessage } = await send(server, headers, "Hello");
+  const original = (await events(server, headers, assistantMessage.id)).at(-1)!.data.message;
+  server.clock.now += 2 * 24 * 60 * 60 * 1000;
+  const { ChatEngine } = await import("../src/chat.ts");
+  assert.ok(new ChatEngine(server.deps).pruneEvents(24 * 60 * 60 * 1000) > 0);
+  const later = await signIn(server); // the old access token has expired
+  const replay = await events(server, later.headers, assistantMessage.id);
+  assert.equal(replay.length, 1);
+  assert.equal(replay[0].event, "message.done");
+  assert.deepEqual(replay[0].data.message, original);
+});

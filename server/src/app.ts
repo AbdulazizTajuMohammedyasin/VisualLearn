@@ -46,6 +46,10 @@ export interface FigureService {
 export async function buildApp(deps: Deps, options: { logger?: boolean; env?: NodeJS.ProcessEnv } = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: options.logger ?? false, bodyLimit: 1_000_000 });
   const chat = new ChatEngine(deps);
+  // The spec keeps finished replies' events for at least 10 minutes; a day is generous.
+  const prune = setInterval(() => chat.pruneEvents(24 * 60 * 60 * 1000), 60 * 60 * 1000);
+  prune.unref();
+  app.addHook("onClose", async () => clearInterval(prune));
   const limits = rateLimits(deps.now, options.env);
 
   app.setErrorHandler((error, request, reply) => {

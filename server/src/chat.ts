@@ -84,6 +84,16 @@ export class ChatEngine {
     return () => entry.events.off("event", listener);
   }
 
+  /** Drops stream events of replies that finished more than [ageMs] ago; reconnects then get message.done alone. */
+  pruneEvents(ageMs: number) {
+    const cutoff = this.deps.now() - ageMs;
+    return Number(
+      this.deps.db
+        .prepare("DELETE FROM message_events WHERE message_id IN (SELECT id FROM messages WHERE status != 'streaming' AND created_at < ?)")
+        .run(cutoff).changes,
+    );
+  }
+
   stop(messageId: string) {
     this.live.get(messageId)?.abort.abort();
   }
@@ -354,6 +364,11 @@ function streamEvents(request: FastifyRequest, reply: FastifyReply, deps: Deps, 
   for (const [seq, event, data] of buffered) {
     write(seq, event, data);
     if (event === "message.done") done = true;
+  }
+  if (!done && !engine.isLive(messageId)) {
+    // Events of old replies are pruned; the stored message is the whole answer.
+    const row = deps.db.prepare("SELECT * FROM messages WHERE id = ?").get(messageId) as MessageRow | undefined;
+    if (row && row.status !== "streaming") write(last + 1, "message.done", { message: messageJson(row) });
   }
   if (done || !engine.isLive(messageId)) end();
 }
