@@ -30,7 +30,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
     private val deletedFigures = ConcurrentHashMap<String, Long>()
 
     private data class FakeFigure(val figure: Figure, val startedAtMs: Long, var cancelledAt: String? = null)
-    private data class Script(val conversationId: String, val text: String, val mode: SendMode)
+    private data class Script(val conversationId: String, val text: String, val mode: SendMode, val uiAction: UiAction? = null)
 
     @Volatile private var email: String = "dev@visuallearn.invalid"
 
@@ -120,7 +120,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
             c.copy(title = if (c.messages.isEmpty()) shown.take(48) else c.title, messages = c.messages + user + assistant)
         }
         touch(conversationId)
-        pendingReplies[assistant.id] = Script(conversationId, shown, mode)
+        pendingReplies[assistant.id] = Script(conversationId, shown, mode, uiAction)
         return user to assistant
     }
 
@@ -141,6 +141,7 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
         }
         delay(500)
         when {
+            script.uiAction?.name == "review_mistakes" -> streamText(0, reviewMistakes(script.uiAction))
             script.mode == SendMode.FIGURE || listOf("show me", "figure", "visualize", "draw").any { it in lower } -> {
                 streamText(0, "Good one to see in motion. I'm building an interactive figure of it now; the card below shows its progress, and you'll get a notification when it's ready.")
                 val figure = startFigure(script.text, script.conversationId)
@@ -276,6 +277,17 @@ class FakeApi(private val context: Context, private val tokens: TokenStore) : Vi
                 darkPage = page("fake/dial-indicator.html"), lightPage = page("fake/dial-indicator-light.html"),
             )
         }
+    }
+
+    /** Answers the quiz's "Explain my mistakes" from the context the component sent. */
+    private fun reviewMistakes(action: UiAction): String {
+        val mistakes = action.context["mistakes"] as? org.json.JSONArray ?: return SAMPLE_ANSWER
+        val lines = (0 until mistakes.length()).map { i ->
+            val m = mistakes.getJSONObject(i)
+            "- **${m.optString("question")}** You picked *${m.optString("chosen")}*; the answer is *${m.optString("correct")}*."
+        }
+        return "You got ${action.context["score"]} of ${action.context["total"]}. Here's what tripped you up:\n\n" +
+            lines.joinToString("\n") + "\n\nAsk me to *quiz you again* when you're ready."
     }
 
     private fun page(asset: String): Page {

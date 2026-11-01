@@ -135,6 +135,14 @@ class ChatRepository(
         }
     }
 
+    /** A follow-up from an interactive part: shown as the learner's message, sent with its `uiAction`. */
+    fun sendUiAction(sourceMessageId: String, name: String, message: String, context: Map<String, Any?>) =
+        send(message, SendMode.AUTO, UiAction(sourceMessageId, name, context))
+
+    fun uiState(messageId: String, part: Int): String? = store.uiState("$messageId-$part")
+
+    fun saveUiState(messageId: String, part: Int, json: String) = store.saveUiState("$messageId-$part", json)
+
     fun stop() {
         val streaming = _state.value.messages.lastOrNull { it.status == MessageStatus.STREAMING }
         streamJob?.cancel()

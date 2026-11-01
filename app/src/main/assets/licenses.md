@@ -14,6 +14,16 @@ VisualLearn is built on the work of these projects. Thank you.
 
 **Sign in with Google (Credential Manager, Google Identity)**: Apache License 2.0.
 
+## Interactive parts
+
+Quizzes, flashcards and step-by-step explanations are drawn with a bundled page built from:
+
+**OpenUI** (@openuidev/react-lang and @openuidev/lang-core) by Thesys: MIT License, https://github.com/thesysdev/openui
+
+**React and React DOM** by Meta Platforms: MIT License.
+
+**Zod** by Colin McDonnell: MIT License.
+
 ## Figures
 
 Figures are built on VisualLearn's servers with **Anatomy** by Ryan (wheresryan22), MIT License: https://github.com/wheresryan22/anatomy

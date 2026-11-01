@@ -54,10 +54,12 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -75,6 +77,7 @@ import com.visuallearn.app.api.Role
 import com.visuallearn.app.api.SendMode
 import com.visuallearn.app.chat.ChatRepository
 import com.visuallearn.app.figures.FiguresRepository
+import com.visuallearn.app.openui.OpenUiView
 import kotlinx.coroutines.launch
 
 private val SUGGESTIONS = listOf(
@@ -98,6 +101,7 @@ fun ChatScreen(
     val state by chat.state.collectAsStateWithLifecycle()
     val summaries by chat.summaries.collectAsStateWithLifecycle()
     val figureMap by figures.figures.collectAsStateWithLifecycle()
+    val darkTheme = isSystemInDarkTheme()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     fun closeDrawer() = scope.launch { drawer.close() }
@@ -162,6 +166,20 @@ fun ChatScreen(
                                     FigureCard(figure, onOpen = { onOpenFigure(id) }, onCancel = { figures.cancel(id) }, onRetry = { figures.retry(id) })
                                 }
                             },
+                            uiPart = { m, index, part ->
+                                val key = "${m.id}-$index"
+                                val saved = remember(key) { chat.uiState(m.id, index) }
+                                OpenUiView(
+                                    key = key,
+                                    program = part.program,
+                                    streaming = m.status == MessageStatus.STREAMING,
+                                    dark = darkTheme,
+                                    savedState = saved,
+                                    onStateChange = { chat.saveUiState(m.id, index, it) },
+                                    onAction = { chat.sendUiAction(m.id, it.name, it.message, it.context) },
+                                    onOpenFigure = onOpenFigure,
+                                )
+                            },
                             onRetry = chat::retry,
                         )
                     }
@@ -220,7 +238,12 @@ private fun EmptyState(enabled: Boolean, onSuggestion: (String) -> Unit) {
 }
 
 @Composable
-private fun MessageList(messages: List<Message>, figureCard: @Composable (String) -> Unit, onRetry: () -> Unit) {
+private fun MessageList(
+    messages: List<Message>,
+    figureCard: @Composable (String) -> Unit,
+    uiPart: @Composable (Message, Int, Part.Ui) -> Unit,
+    onRetry: () -> Unit,
+) {
     val listState = rememberLazyListState()
     val lastLength = messages.lastOrNull()?.parts?.sumOf { (it as? Part.Text)?.text?.length ?: 1 } ?: 0
     LaunchedEffect(messages.size, lastLength) {
@@ -237,10 +260,10 @@ private fun MessageList(messages: List<Message>, figureCard: @Composable (String
                 Role.USER -> UserBubble(m.parts.filterIsInstance<Part.Text>().joinToString("") { it.text })
                 Role.ASSISTANT -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (m.parts.isEmpty() && m.status == MessageStatus.STREAMING) TypingDots()
-                    m.parts.forEach { part ->
+                    m.parts.forEachIndexed { index, part ->
                         when (part) {
                             is Part.Text -> if (part.text.isNotBlank()) MarkdownText(part.text)
-                            is Part.Ui -> InteractivePartPlaceholder(part)
+                            is Part.Ui -> uiPart(m, index, part)
                             is Part.Figure -> figureCard(part.figureId)
                         }
                     }
@@ -253,26 +276,6 @@ private fun MessageList(messages: List<Message>, figureCard: @Composable (String
                     }
                 }
             }
-        }
-    }
-}
-
-/** Stand-in for OpenUI content until the interactive renderer lands. */
-@Composable
-private fun InteractivePartPlaceholder(part: Part.Ui) {
-    val components = Regex("""=\s*([A-Z][A-Za-z]+)\(""").findAll(part.program).map { it.groupValues[1] }.toList()
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Interactive: ${components.firstOrNull() ?: "content"}", style = MaterialTheme.typography.titleSmall)
-            Text(
-                "${components.size} components. The interactive renderer arrives with the OpenUI component library.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }

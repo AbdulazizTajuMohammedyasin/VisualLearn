@@ -49,6 +49,13 @@ class OfflineStore(context: Context) {
     @Synchronized
     fun saveFigures(list: Collection<Figure>) = write(figuresFile, JSONArray(list.map(ApiJson::write)).toString())
 
+    /** Saved answers and card positions of one interactive message part (OpenUI), as JSON. */
+    @Synchronized
+    fun uiState(key: String): String? = read(uiStateFile(key))
+
+    @Synchronized
+    fun saveUiState(key: String, json: String) = write(uiStateFile(key), json)
+
     /** Where the next /sync continues from; null until the first sync. */
     var cursor: String?
         @Synchronized get() = read(cursorFile)
@@ -61,8 +68,12 @@ class OfflineStore(context: Context) {
         dir.deleteRecursively()
     }
 
+    private fun conversationFile(id: String) = File(conversationsDir, safe(id) + ".json")
+
+    private fun uiStateFile(key: String) = File(File(dir, "ui-state"), safe(key) + ".json")
+
     // Ids come from the server; keep them to safe file names.
-    private fun conversationFile(id: String) = File(conversationsDir, id.replace(Regex("[^A-Za-z0-9_-]"), "_") + ".json")
+    private fun safe(id: String) = id.replace(Regex("[^A-Za-z0-9_-]"), "_")
 
     private fun read(file: File): String? = file.takeIf { it.exists() }?.readText()
 
