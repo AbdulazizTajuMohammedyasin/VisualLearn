@@ -130,7 +130,7 @@ class LinuxEnv(private val context: Context) {
         File(rootfs, "etc/apt/apt.conf.d/01-proot").writeText("APT::Sandbox::User \"root\";\n")
         fakeProcDir.mkdirs()
         FAKE_PROC.forEach { (name, content) -> File(fakeProcDir, name).writeText(content) }
-        File(rootfs, "tmp").apply { mkdirs(); setWritable(true, false) }
+        File(rootfs, "tmp").mkdirs()
     }
 
     /**
