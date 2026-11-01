@@ -36,16 +36,17 @@ class SyncManager(
         }
     }
 
-    fun syncNow() = scope.launch {
-        mutex.withLock {
-            runCatching {
-                val result = api.sync(store.cursor)
-                result.deletedConversationIds.forEach(chat::removeLocal)
-                result.conversations.forEach { chat.applyRemote(it) }
-                figures.applySync(result.figures, result.deletedFigureIds)
-                store.cursor = result.cursor
-            }.onFailure { Log.w(TAG, "sync failed", it) }
-        }
+    fun syncNow() = scope.launch { syncOnce() }
+
+    /** One sync; false when it failed (offline, server unreachable). */
+    suspend fun syncOnce(): Boolean = mutex.withLock {
+        runCatching {
+            val result = api.sync(store.cursor)
+            result.deletedConversationIds.forEach(chat::removeLocal)
+            result.conversations.forEach { chat.applyRemote(it) }
+            figures.applySync(result.figures, result.deletedFigureIds)
+            store.cursor = result.cursor
+        }.onFailure { Log.w(TAG, "sync failed", it) }.isSuccess
     }
 
     private companion object {

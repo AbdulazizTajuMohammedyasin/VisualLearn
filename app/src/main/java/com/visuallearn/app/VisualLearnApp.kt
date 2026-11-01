@@ -5,6 +5,7 @@ import com.visuallearn.app.api.Backend
 import com.visuallearn.app.api.VisualLearnApi
 import com.visuallearn.app.auth.TokenStore
 import com.visuallearn.app.chat.ChatRepository
+import com.visuallearn.app.figures.FigureCheckWorker
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.gallery.Gallery
 import com.visuallearn.app.offline.Connectivity
@@ -14,8 +15,10 @@ import com.visuallearn.app.settings.Settings
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.concurrent.thread
@@ -53,7 +56,15 @@ class VisualLearnApp : Application() {
         sync = SyncManager(api, store, chat, figures, scope)
         sync.start(connectivity.online, tokens.signedIn)
         clearOnSignOut(store)
+        checkFiguresInBackground()
         removeOnDeviceEnvironment()
+    }
+
+    /** Background checks run only while some figure is unfinished. */
+    private fun checkFiguresInBackground() = scope.launch {
+        figures.figures.map { figures.hasActive(it) }.distinctUntilChanged().collect { active ->
+            if (active) FigureCheckWorker.schedule(this@VisualLearnApp) else FigureCheckWorker.cancel(this@VisualLearnApp)
+        }
     }
 
     /** Another person may sign in next on this phone; they must not see the last one's data. */

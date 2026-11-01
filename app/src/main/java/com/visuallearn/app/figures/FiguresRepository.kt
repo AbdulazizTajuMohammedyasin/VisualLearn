@@ -85,12 +85,21 @@ class FiguresRepository(private val context: Context, private val api: VisualLea
 
     /** Applies figure changes from /sync: new states, pages to save, and deletions. */
     suspend fun applySync(changed: List<Figure>, deletedIds: List<String>) {
+        val before = _figures.value
         changed.forEach(::put)
         removeLocal(deletedIds)
         // Includes jobs whose live stream dropped while the phone was offline.
         _figures.value.values.filter { it.status.isActive }.forEach { watch(it.id) }
-        changed.filter { it.status == FigureStatus.SUCCEEDED }.forEach { saveFinishedPages(it) }
+        for (figure in changed) {
+            if (figure.status == FigureStatus.SUCCEEDED) saveFinishedPages(figure)
+            // Finished while nothing was watching (app closed or offline): tell the user now.
+            val wasActive = before[figure.id]?.status?.isActive == true
+            if (wasActive && !figure.status.isActive && figure.status != FigureStatus.CANCELLED) notify(figure)
+        }
     }
+
+    /** Whether any figure is still queued or running, so background checks are worth doing. */
+    fun hasActive(map: Map<String, Figure> = _figures.value) = map.values.any { it.status.isActive }
 
     /** Removes figures from the phone, with any page no other figure uses. */
     private fun removeLocal(ids: List<String>) {
