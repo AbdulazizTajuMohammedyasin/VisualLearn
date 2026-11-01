@@ -33,6 +33,15 @@ const get = async (server: TestServer, headers: Record<string, string>, id: stri
 
 const tick = () => new Promise((r) => setTimeout(r, 20));
 
+/** Waits until [condition] holds (jobs start and finish asynchronously). */
+async function until(condition: () => boolean | Promise<boolean>, ms = 3000) {
+  const end = Date.now() + ms;
+  while (!(await condition())) {
+    if (Date.now() > end) throw new Error("timed out waiting");
+    await tick();
+  }
+}
+
 test("a figure runs through its stages and its pages download with matching sha256", async () => {
   const server = await testServer();
   const { headers } = await signIn(server);
@@ -85,7 +94,7 @@ test("the queue is shared fairly: a newcomer's first job goes ahead of someone's
   assert.ok((await get(server, b.headers, b1.id)).estimatedStartAt);
 
   runner.finish("a1");
-  await tick();
+  await until(() => runner.started.length === 2);
   assert.deepEqual(runner.started, ["a1", "b1"]);
   assert.equal((await get(server, a.headers, a2.id)).queuePosition, 1);
 });
@@ -122,8 +131,7 @@ test("cancel stops a running job and retry queues it again", async () => {
   const retried = (await server.app.inject({ method: "POST", url: `/v1/figures/${id}/retry`, headers })).json();
   assert.equal(retried.status, "running");
   runner.finish("job");
-  await tick();
-  assert.equal((await get(server, headers, id)).status, "succeeded");
+  await until(async () => (await get(server, headers, id)).status === "succeeded");
 });
 
 test("deleting a figure removes it, its pages and records it for sync", async () => {

@@ -142,26 +142,35 @@ export class Figures implements FigureService {
    */
   queueOrder(): FigureRow[] {
     const { db } = this.deps;
-    const queued = db.prepare("SELECT * FROM figures WHERE status = 'queued' ORDER BY queued_at, id").all() as unknown as FigureRow[];
+    const queued = db.prepare("SELECT * FROM figures WHERE status = 'queued' ORDER BY queued_at, rowid").all() as unknown as FigureRow[];
     const runningByUser = new Map<string, number>();
     for (const r of db.prepare("SELECT user_id, COUNT(*) AS n FROM figures WHERE status = 'running' GROUP BY user_id").all() as { user_id: string; n: number }[]) {
       runningByUser.set(r.user_id, r.n);
     }
+    // When each user's last job started: among equally loaded users, the one served longest ago goes first.
+    const lastServed = new Map<string, number>();
+    for (const r of db.prepare("SELECT user_id, MAX(started_at) AS t FROM figures WHERE started_at IS NOT NULL GROUP BY user_id").all() as { user_id: string; t: number }[]) {
+      lastServed.set(r.user_id, r.t);
+    }
     const byUser = new Map<string, FigureRow[]>();
     for (const f of queued) byUser.set(f.user_id, [...(byUser.get(f.user_id) ?? []), f]);
     const order: FigureRow[] = [];
+    const before = (a: string, b: string) => {
+      const load = (runningByUser.get(a) ?? 0) - (runningByUser.get(b) ?? 0);
+      if (load !== 0) return load < 0;
+      const served = (lastServed.get(a) ?? -Infinity) - (lastServed.get(b) ?? -Infinity);
+      if (served !== 0 && !Number.isNaN(served)) return served < 0;
+      return byUser.get(a)![0].queued_at < byUser.get(b)![0].queued_at;
+    };
+    let turn = Number.MAX_SAFE_INTEGER - 1_000_000;
     while (byUser.size) {
-      // Least-served user next; ties go to whoever has waited longest.
       let best: string | null = null;
-      for (const [user, jobs] of byUser) {
-        if (best === null) best = user;
-        const load = runningByUser.get(user) ?? 0;
-        const bestLoad = runningByUser.get(best) ?? 0;
-        if (load < bestLoad || (load === bestLoad && jobs[0].queued_at < byUser.get(best)![0].queued_at)) best = user;
-      }
+      for (const user of byUser.keys()) if (best === null || before(user, best)) best = user;
       const jobs = byUser.get(best!)!;
       order.push(jobs.shift()!);
+      // Simulate the job starting, so the next pick goes round the other users.
       runningByUser.set(best!, (runningByUser.get(best!) ?? 0) + 1);
+      lastServed.set(best!, turn++);
       if (!jobs.length) byUser.delete(best!);
     }
     return order;
