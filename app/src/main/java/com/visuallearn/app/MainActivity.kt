@@ -23,6 +23,7 @@ import com.visuallearn.app.ui.ChatScreen
 import com.visuallearn.app.ui.EnvironmentScreen
 import com.visuallearn.app.ui.ExploreScreen
 import com.visuallearn.app.ui.GalleryFigureScreen
+import com.visuallearn.app.ui.LicensesScreen
 import com.visuallearn.app.ui.FigureScreen
 import com.visuallearn.app.ui.FiguresScreen
 import com.visuallearn.app.ui.SettingsScreen
@@ -94,6 +95,7 @@ private sealed interface Screen {
     data object Explore : Screen
     data class GalleryFigure(val key: String) : Screen
     data object Storage : Screen
+    data object Licenses : Screen
 }
 
 private fun Screen.encode(): String = when (this) {
@@ -105,6 +107,7 @@ private fun Screen.encode(): String = when (this) {
     Screen.Explore -> "explore"
     is Screen.GalleryFigure -> "gallery:$key"
     Screen.Storage -> "storage"
+    Screen.Licenses -> "licenses"
 }
 
 private fun decode(s: String): Screen = when {
@@ -114,6 +117,7 @@ private fun decode(s: String): Screen = when {
     s == "environment" -> Screen.Environment
     s == "explore" -> Screen.Explore
     s == "storage" -> Screen.Storage
+    s == "licenses" -> Screen.Licenses
     s.startsWith("gallery:") -> Screen.GalleryFigure(s.removePrefix("gallery:"))
     else -> Screen.Chat
 }
@@ -163,6 +167,7 @@ private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<Stri
             onBack = ::pop,
             onOpenEnvironment = { push(Screen.Environment) },
             onOpenStorage = { push(Screen.Storage) },
+            onOpenLicenses = { push(Screen.Licenses) },
         )
         Screen.Environment -> EnvironmentScreen(app.envController, onBack = ::pop)
         Screen.Explore -> ExploreScreen(app.gallery, onOpen = { push(Screen.GalleryFigure(it.key)) }, onBack = ::pop)
@@ -170,5 +175,6 @@ private fun AppNavigation(app: VisualLearnApp, pendingJob: MutableStateFlow<Stri
             ?.let { GalleryFigureScreen(app.gallery, it, onBack = ::pop) }
             ?: ExploreScreen(app.gallery, onOpen = { push(Screen.GalleryFigure(it.key)) }, onBack = ::pop)
         Screen.Storage -> StorageScreen(app.envController, app.figureJobs, onBack = ::pop)
+        Screen.Licenses -> LicensesScreen(onBack = ::pop)
     }
 }
