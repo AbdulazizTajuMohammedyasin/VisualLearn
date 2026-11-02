@@ -150,7 +150,7 @@ fun FiguresScreen(figures: FiguresRepository, onOpen: (String) -> Unit, onBack: 
         val building = list.count { it.status.isActive }
         val ready = list.count { it.status == FigureStatus.SUCCEEDED }
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 160.dp),
+            columns = GridCells.Adaptive(minSize = 148.dp),
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp),
