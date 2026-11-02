@@ -117,6 +117,7 @@ app/src/debug/    FakeApi, sample figures, debug Backend
 app/src/release/  release Backend (always HttpApi)
 ui-library/       OpenUI component library: app renderer and server prompt
 server/           API server (Node 24, Fastify, SQLite); see server/README.md
+harness/          LearnHarness fork (AGPL-3.0): the learning engine being adopted; see harness/UPSTREAM.md
 docs/server-api.md
 ```
 
@@ -129,5 +130,7 @@ An earlier version ran the whole agent on the phone, in a Debian proot environme
 [Conventional Commits](https://www.conventionalcommits.org/): `type(scope): description`, lowercase and in the imperative, one feature or milestone per commit.
 
 ## Licences
+
+The learning engine in [harness/](harness/) is a fork of [LearnHarness](https://github.com/amosblomqvist/learnharness) under the GNU AGPL-3.0. The VisualLearn server is being built on it, so the server will be AGPL-3.0 too, and its users are entitled to its source. See [harness/UPSTREAM.md](harness/UPSTREAM.md).
 
 Third-party notices are in [app/src/main/assets/licenses.md](app/src/main/assets/licenses.md) and shown in the app under Settings → Open-source licences. Anatomy is MIT. Gallery figures are MIT or CC-BY-4.0, and each one shows its author.
