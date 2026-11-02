@@ -23,5 +23,16 @@ export const unauthenticated = () => new ApiError(401, "unauthenticated", "Pleas
 export const forbidden = () => new ApiError(403, "forbidden", "You don't have access to this.");
 export const notFound = (what = "This item") => new ApiError(404, "not_found", `${what} no longer exists.`);
 export const conflict = (message: string) => new ApiError(409, "conflict", message);
+/** What went wrong with a model provider, in words for the learner; null when it isn't the provider's fault. */
+export function providerProblem(text: string): { code: string; message: string; retryable: boolean } | null {
+  if (/exceeded your current quota|RESOURCE_EXHAUSTED|insufficient_quota|credit balance is too low|billing/i.test(text)) {
+    return { code: "provider_quota", message: "The AI service has reached its usage limit for now. Try again later.", retryable: true };
+  }
+  if (/high demand|overloaded|try again later|\b(503|529)\b|rate limit|too many requests|\b429\b/i.test(text)) {
+    return { code: "provider_busy", message: "The AI service is busy right now. Try again in a few minutes.", retryable: true };
+  }
+  return null;
+}
+
 export const rateLimited = (seconds: number, message = "You're going a bit fast. Try again in a few seconds.") =>
   new ApiError(429, "rate_limited", message, { retryable: true, headers: { "Retry-After": String(seconds) } });

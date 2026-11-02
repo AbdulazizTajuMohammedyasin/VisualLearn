@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { providerProblem } from "./errors.ts";
 import type { ModelRegistry } from "./models.ts";
 
 export const STAGES = ["research", "design", "parts", "geometry", "build", "motion", "verify", "polish"] as const;
@@ -27,6 +28,16 @@ export interface RunHooks {
   /** The agent session id, saved so a retry can resume it. */
   session(id: string): void;
   signal: AbortSignal;
+}
+
+/** A figure job that ended without a figure; [problem] says why in the learner's words, when known. */
+export class FigureFailure extends Error {
+  readonly problem: { code: string; message: string; retryable: boolean } | null;
+
+  constructor(message: string, problem: { code: string; message: string; retryable: boolean } | null) {
+    super(message);
+    this.problem = problem;
+  }
 }
 
 /** Turns a prompt into finished figure pages. */
@@ -178,6 +189,8 @@ export class OpenCodeRunner implements FigureRunner {
     const poll = setInterval(readProgress, 1000);
 
     let stdout = "";
+    // `run --format json` reports model errors on stdout; stderr is often empty.
+    const errors: string[] = [];
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString();
       const lines = stdout.split("\n");
@@ -185,6 +198,7 @@ export class OpenCodeRunner implements FigureRunner {
       for (const line of lines) {
         const id = /"sessionI[Dd]"\s*:\s*"([^"]+)"/.exec(line)?.[1];
         if (id) hooks.session(id);
+        if (/"type"\s*:\s*"error"|"error"\s*:\s*\{/.test(line)) errors.push(line.slice(0, 1000));
       }
     });
     let stderr = "";
@@ -197,11 +211,15 @@ export class OpenCodeRunner implements FigureRunner {
     clearTimeout(timeout);
     clearInterval(poll);
     readProgress(); // whatever was reported after the last poll
+    if (/"type"\s*:\s*"error"/.test(stdout)) errors.push(stdout.slice(0, 1000)); // a last line without a newline
     hooks.signal.removeEventListener("abort", kill);
     if (hooks.signal.aborted) throw hooks.signal.reason;
 
     const resultFile = join(dir, "result.json");
-    if (!existsSync(resultFile)) throw new Error(`opencode exited ${code} without finishing: ${stderr.trim().slice(-500)}`);
+    if (!existsSync(resultFile)) {
+      const detail = [...errors.slice(-3), stderr.trim().slice(-500)].join("\n");
+      throw new FigureFailure(`opencode exited ${code} without finishing: ${detail}`, providerProblem(detail));
+    }
     const result = JSON.parse(readFileSync(resultFile, "utf8")) as { title: string; summary: string };
     return {
       title: String(result.title).slice(0, 80),

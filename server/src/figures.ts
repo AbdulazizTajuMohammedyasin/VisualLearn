@@ -7,7 +7,7 @@ import type { Deps, FigureService } from "./app.ts";
 import { transaction } from "./db.ts";
 import { badRequest, conflict, notFound, rateLimited } from "./errors.ts";
 import type { Previewer } from "./previews.ts";
-import { STAGES, type FigureRunner, type Stage } from "./runners.ts";
+import { FigureFailure, STAGES, type FigureRunner, type Stage } from "./runners.ts";
 import { iso, newId, sha256 } from "./util.ts";
 
 export interface FigureRow {
@@ -233,9 +233,10 @@ export class Figures implements FigureService {
       } catch (e) {
         if (abort.signal.aborted) return;
         this.deps.log(`figure ${f.id} failed: ${(e as Error)?.message ?? e}`);
+        const problem = e instanceof FigureFailure ? e.problem : null;
         this.update(f.id, {
           status: "failed", message: "Stopped.", finished_at: this.deps.now(),
-          error_json: JSON.stringify({ code: "figure_failed", message: "This figure couldn't be finished. Try again.", retryable: true }),
+          error_json: JSON.stringify(problem ?? { code: "figure_failed", message: "This figure couldn't be finished. Try again.", retryable: true }),
         });
       } finally {
         this.running.delete(f.id);

@@ -4,7 +4,7 @@ import type { ModelMessage, UserContent } from "ai";
 import type { Deps } from "./app.ts";
 import { transaction } from "./db.ts";
 import type { DocumentRow } from "./documents.ts";
-import { badRequest, notFound } from "./errors.ts";
+import { badRequest, notFound, providerProblem } from "./errors.ts";
 import { FenceSplitter } from "./fence.ts";
 import { runChat } from "./models.ts";
 import { iso, newId } from "./util.ts";
@@ -175,7 +175,8 @@ export class ChatEngine {
         if (abort.signal.aborted) this.finish(assistantId, parts, null, send);
         else {
           this.deps.log(`chat reply ${assistantId} failed: ${(e as Error)?.message ?? e}`);
-          this.finish(assistantId, parts, { code: "model_error", message: "The reply couldn't be finished. Try again.", retryable: true }, send);
+          const problem = providerProblem(`${(e as Error)?.message ?? e} ${(e as { statusCode?: number })?.statusCode ?? ""}`);
+          this.finish(assistantId, parts, problem ?? { code: "model_error", message: "The reply couldn't be finished. Try again.", retryable: true }, send);
         }
       } finally {
         this.live.delete(assistantId);
