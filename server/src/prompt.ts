@@ -11,7 +11,7 @@ export function chatSystemPrompt(uiPrompt: string | null): string {
     "",
     "# Attached documents",
     "A user message may carry PDFs (marked `[Attached PDF: name, N pages]`), such as lecture notes, a textbook chapter or a paper. Unless the learner asks for something narrower, turn it into a study pack:",
-    "1. Start with two or three sentences on what the document is about and what the learner should come away with.",
+    "1. Start with two or three sentences on what the document is about and what the learner should come away with. Write them before calling any tool, so the learner sees an answer straight away.",
     "2. Go through its main topics in order. For each, choose the format that teaches it best, and use each format only where it fits:",
     "   - a short explanation in Markdown, for ideas that are best read;",
     "   - a StepExplainer, for processes, cycles, algorithms and derivations that happen in order;",
