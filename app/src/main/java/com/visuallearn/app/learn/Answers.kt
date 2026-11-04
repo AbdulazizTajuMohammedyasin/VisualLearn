@@ -52,6 +52,8 @@ fun buildAnswer(q: LessonItem.Question, choice: AnswerChoice, now: Instant = Ins
 /** The lesson inputs the phone sends (harness/src/core/input-events.ts ChatInput). */
 object LessonInput {
     fun text(text: String): JSONObject = JSONObject().put("type", "text").put("text", text)
+    /** Tells the teacher where the learner's PDF is; the lesson shows it as the PDF, not this sentence. */
+    fun withPdf(path: String, ask: String): JSONObject = text("I've attached my PDF at $path. $ask")
     fun answer(q: LessonItem.Question, choice: AnswerChoice): JSONObject =
         JSONObject().put("type", "answer").put("toolCallId", q.callId).put("answer", buildAnswer(q, choice))
     fun retry(): JSONObject = JSONObject().put("type", "retry")

@@ -78,6 +78,7 @@ import com.visuallearn.app.chat.PdfAttachment
 import com.visuallearn.app.figure.FigureView
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.learn.AnswerChoice
+import com.visuallearn.app.learn.JobProgress
 import com.visuallearn.app.learn.LessonItem
 import com.visuallearn.app.learn.LessonRepository
 import com.visuallearn.app.learn.LessonSummary
@@ -267,7 +268,7 @@ fun LessonScreen(lessons: LessonRepository, figures: FiguresRepository, lessonId
                     ) {
                         items(lesson.items, key = { it.key }) { item ->
                             when (item) {
-                                is LessonItem.Learner -> LearnerBubble(item.text)
+                                is LessonItem.Learner -> LearnerBubble(item.text, item.pdf)
                                 is LessonItem.Teacher -> MarkdownText(MathText.plain(item.markdown))
                                 is LessonItem.Question -> if (item.answer != null) AnsweredQuestion(item) else PendingMarker(item)
                                 is LessonItem.Divider -> PhaseDivider(item.text)
@@ -277,7 +278,7 @@ fun LessonScreen(lessons: LessonRepository, figures: FiguresRepository, lessonId
                                     if (figure != null) {
                                         FigurePlate(figure, previews[figure.id], onOpen = { onOpenFigure(figure.id) }, onCancel = { figures.cancel(figure.id) }, onRetry = { figures.retry(figure.id) })
                                     } else if (item.figureId != null) {
-                                        WorkingPlate(LessonItem.Working(item.key, "figure", item.title), "Loading the figure")
+                                        WorkingPlate(LessonItem.Working(item.key, "figure", item.title), JobProgress("running", "Loading the figure"))
                                     } else {
                                         Text("The 3D figure \"${item.title}\" couldn't be built.", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
                                     }
@@ -322,8 +323,9 @@ fun LessonScreen(lessons: LessonRepository, figures: FiguresRepository, lessonId
 }
 
 @Composable
-private fun LearnerBubble(text: String) {
-    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+private fun LearnerBubble(text: String, pdf: String?) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        pdf?.let { DocumentChip(it, "PDF") }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(22.dp), modifier = Modifier.widthIn(max = 320.dp)) {
             Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
         }
@@ -404,15 +406,21 @@ private fun Verdict(text: String, color: Color) {
 
 /** Background work in progress: research, a PDF being read, a demo or 3D figure being built. */
 @Composable
-private fun WorkingPlate(item: LessonItem.Working, activity: String?) {
+private fun WorkingPlate(item: LessonItem.Working, progress: JobProgress?) {
     Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(Color(0xFF121214))) {
         if (item.kind == "figure" || item.kind == "demo") IsoGrid(Modifier.matchParentSize(), moving = true)
         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                StatusDot(StatusColors.Building)
+                StatusDot(
+                    when {
+                        progress?.done == true -> StatusColors.Ready
+                        progress?.failed == true -> StatusColors.Failed
+                        else -> StatusColors.Building
+                    },
+                )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    when (item.kind) {
+                    if (progress?.done == true) "Ready" else if (progress?.failed == true) "Didn't finish" else when (item.kind) {
                         "figure" -> "Building a 3D figure"
                         "demo" -> "Building an interactive demo"
                         "visual" -> "Drawing a figure"
@@ -424,7 +432,9 @@ private fun WorkingPlate(item: LessonItem.Working, activity: String?) {
             }
             Text(item.title, style = MaterialTheme.typography.titleMedium, color = Color(0xFFF4F4F1))
             Text(
-                activity ?: if (item.kind == "figure") "This takes 20 to 60 minutes. You'll be told when it's ready; the lesson goes on meanwhile." else "The lesson goes on meanwhile.",
+                if (progress?.done == true) "The teacher brings it in at the next step."
+                else if (progress?.failed == true) progress.error ?: "The teacher will carry on without it."
+                else progress?.activity?.takeIf { it.isNotBlank() } ?: if (item.kind == "figure") "This takes 20 to 60 minutes. You'll be told when it's ready; the lesson goes on meanwhile." else "The lesson goes on meanwhile.",
                 style = MaterialTheme.typography.bodySmall, color = Color(0xFF8B8B92), maxLines = 3, overflow = TextOverflow.Ellipsis,
             )
         }

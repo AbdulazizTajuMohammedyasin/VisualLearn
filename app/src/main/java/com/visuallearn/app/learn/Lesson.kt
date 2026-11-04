@@ -10,6 +10,21 @@ import org.json.JSONObject
  * harness/src/core (native-messages.ts, question-core.ts, contracts/jobs.ts).
  */
 
+/**
+ * A piece of background work as LearnHarness reports it. Its result reaches
+ * the lesson only on the teacher's next turn, so a finished job can still be
+ * waiting there, for example behind a question the learner hasn't answered.
+ */
+data class JobProgress(
+    /** running, done or error (harness/src/core/contracts/jobs.ts JobStatus). */
+    val status: String,
+    val activity: String,
+    val error: String? = null,
+) {
+    val done get() = status == "done"
+    val failed get() = status == "error"
+}
+
 /** One row of the lesson list. */
 data class LessonSummary(
     val id: String,
@@ -50,7 +65,8 @@ data class GivenAnswer(
 sealed interface LessonItem {
     val key: String
 
-    data class Learner(override val key: String, val text: String) : LessonItem
+    /** What the learner said, and the PDF they attached to it if any. */
+    data class Learner(override val key: String, val text: String, val pdf: String? = null) : LessonItem
     data class Teacher(override val key: String, val markdown: String) : LessonItem
 
     data class Question(
@@ -167,7 +183,7 @@ object LessonJson {
         messages.forEachIndexed { i, m ->
             val id = m.optString("id").ifBlank { "m$i" }
             when (m.optString("role")) {
-                "user" -> text(m).takeIf { it.isNotBlank() }?.let { items += LessonItem.Learner(id, it) }
+                "user" -> text(m).takeIf { it.isNotBlank() }?.let { items += learner(id, it) }
                 "assistant" -> {
                     val content = m.optJSONArray("content") ?: JSONArray()
                     for (c in 0 until content.length()) {
@@ -199,10 +215,18 @@ object LessonJson {
         title = when (tool) {
             "figure", "demo" -> args.optString("title").ifBlank { if (tool == "figure") "3D figure" else "Interactive demo" }
             "research" -> "Looking it up"
-            "pdf" -> "Reading your PDF"
+            "pdf" -> args.optString("path").substringAfterLast('/').ifBlank { "Your PDF" }
             else -> "Drawing a figure"
         },
     )
+
+    /** A message that attached a PDF ([LessonInput.withPdf]) shows as the PDF and what was asked of it. */
+    private fun learner(id: String, text: String): LessonItem.Learner {
+        val m = PDF_MESSAGE.matchEntire(text) ?: return LessonItem.Learner(id, text)
+        return LessonItem.Learner(id, m.groupValues[2], pdf = m.groupValues[1])
+    }
+
+    private val PDF_MESSAGE = Regex("""I've attached my PDF at ~/(.+?\.pdf)\. (.*)""", RegexOption.DOT_MATCHES_ALL)
 
     private fun custom(id: String, m: JSONObject): LessonItem? {
         val details = m.optJSONObject("details") ?: JSONObject()

@@ -108,6 +108,19 @@ class LessonJsonTest {
     }
 
     @Test
+    fun aMessageWithAPdfShowsThePdfAndTheAsk() {
+        val sent = LessonInput.withPdf("~/four-stroke-engine.pdf", "Teach me what's in it.").getString("text")
+        val items = LessonJson.project(
+            listOf(
+                json(JSONObject().put("role", "user").put("content", sent).toString()),
+                json("""{"role":"assistant","content":[{"type":"toolCall","id":"p","name":"pdf","arguments":{"path":"~/four-stroke-engine.pdf"}}]}"""),
+            ),
+        )
+        assertEquals(LessonItem.Learner(items[0].key, "Teach me what's in it.", pdf = "four-stroke-engine.pdf"), items[0])
+        assertEquals("four-stroke-engine.pdf", (items[1] as LessonItem.Working).title)
+    }
+
+    @Test
     fun aWrittenAnswerCarriesTheTextAndTheCommittedAnswer() {
         val explain = LessonJson.project(
             listOf(json("""{"role":"assistant","content":[{"type":"toolCall","id":"c","name":"recall","arguments":{"question":"Why a flywheel?","correctAnswer":"It carries the crank through the three unpowered strokes."}}]}""")),

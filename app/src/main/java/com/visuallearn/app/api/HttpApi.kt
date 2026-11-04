@@ -10,6 +10,7 @@ import com.visuallearn.app.api.ApiJson.parseSync
 import com.visuallearn.app.api.ApiJson.parseTokens
 import com.visuallearn.app.api.ApiJson.parseUser
 import com.visuallearn.app.auth.TokenStore
+import com.visuallearn.app.learn.JobProgress
 import com.visuallearn.app.learn.LearnApi
 import com.visuallearn.app.learn.LessonJson
 import com.visuallearn.app.learn.LessonSummary
@@ -179,10 +180,12 @@ class HttpApi(
         call("POST", "/learn/api/chat", JSONObject().put("chatId", id).put("input", input))
     }
 
-    override suspend fun lessonActivity(id: String): Map<String, String> =
+    override suspend fun lessonActivity(id: String): Map<String, JobProgress> =
         call("GET", "/learn/api/jobs?chatId=" + java.net.URLEncoder.encode(id, "UTF-8")).optJSONArray("jobs")?.objects()
-            ?.filter { it.optString("status") == "running" }
-            ?.associate { it.optString("toolCallId") to it.optString("activity") }
+            ?.associate { job ->
+                job.optString("toolCallId") to
+                    JobProgress(job.optString("status"), job.optString("activity"), job.optString("error").takeIf { it.isNotBlank() && it != "null" })
+            }
             .orEmpty()
 
     override suspend fun deleteLesson(id: String) {
