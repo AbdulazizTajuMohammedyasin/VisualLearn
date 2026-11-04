@@ -14,6 +14,19 @@ export interface Provider {
   baseUrl: string | null;
   apiKey: string | null;
   models: string[];
+  /** What each model can do, for endpoints that don't say (local servers). */
+  modelInfo?: Record<string, ModelInfo>;
+}
+
+export interface ModelInfo {
+  /** Context window in tokens: what the server is actually configured for. */
+  context?: number;
+  /** Most tokens one reply may have. */
+  maxTokens?: number;
+  /** Accepts images (PDF pages, screenshots). */
+  image?: boolean;
+  /** Supports a reasoning (thinking) effort. */
+  reasoning?: boolean;
 }
 
 export interface Route {
@@ -60,11 +73,11 @@ export class ModelRegistry {
   saveProvider(p: Provider) {
     this.db
       .prepare(
-        `INSERT INTO providers (id, kind, npm, base_url, api_key, models_json) VALUES (?, ?, ?, ?, ?, ?)
+        `INSERT INTO providers (id, kind, npm, base_url, api_key, models_json, model_info_json) VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET kind = excluded.kind, npm = excluded.npm, base_url = excluded.base_url,
-           api_key = excluded.api_key, models_json = excluded.models_json`,
+           api_key = excluded.api_key, models_json = excluded.models_json, model_info_json = excluded.model_info_json`,
       )
-      .run(p.id, p.kind, p.npm, p.baseUrl, p.apiKey, JSON.stringify(p.models));
+      .run(p.id, p.kind, p.npm, p.baseUrl, p.apiKey, JSON.stringify(p.models), JSON.stringify(p.modelInfo ?? {}));
   }
 
   deleteProvider(id: string) {
@@ -119,10 +132,11 @@ interface ProviderRow {
   base_url: string | null;
   api_key: string | null;
   models_json: string;
+  model_info_json: string;
 }
 
 const fromRow = (r: ProviderRow): Provider => ({
-  id: r.id, kind: r.kind, npm: r.npm, baseUrl: r.base_url, apiKey: r.api_key, models: JSON.parse(r.models_json),
+  id: r.id, kind: r.kind, npm: r.npm, baseUrl: r.base_url, apiKey: r.api_key, models: JSON.parse(r.models_json), modelInfo: JSON.parse(r.model_info_json || "{}"),
 });
 
 // --- running a chat turn ---

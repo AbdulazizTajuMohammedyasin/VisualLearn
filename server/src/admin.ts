@@ -4,8 +4,8 @@ import { publicUser, type UserRow } from "./auth.ts";
 import { deleteConversation, summaryJson, type ChatEngine } from "./chat.ts";
 import { badRequest, conflict, forbidden, notFound } from "./errors.ts";
 import type { FigureRow } from "./figures.ts";
-import { LEARN_PROVIDERS, LEARN_SLOTS } from "./learn.ts";
-import { SUPPORTED_NPM, type Provider, type Route, type Routing } from "./models.ts";
+import { CUSTOM_NPM, LEARN_PROVIDERS, LEARN_SLOTS } from "./learn.ts";
+import { SUPPORTED_NPM, type ModelInfo, type Provider, type Route, type Routing } from "./models.ts";
 import { iso } from "./util.ts";
 
 const MASK = "••••";
@@ -45,7 +45,7 @@ export function adminRoutes(app: FastifyInstance, deps: Deps, chat: ChatEngine) 
     // Keys are write-only: the mask (or no key) keeps the stored one.
     const existing = models.provider(id);
     const apiKey = typeof body.apiKey === "string" && body.apiKey && body.apiKey !== MASK ? body.apiKey : (existing?.apiKey ?? null);
-    const provider: Provider = { id, kind: body.kind, npm: body.npm!, baseUrl, apiKey, models: body.models };
+    const provider: Provider = { id, kind: body.kind, npm: body.npm!, baseUrl, apiKey, models: body.models, modelInfo: checkModelInfo(body.modelInfo, body.models) };
     models.saveProvider(provider);
     return maskProvider(provider);
   });
@@ -60,6 +60,30 @@ export function adminRoutes(app: FastifyInstance, deps: Deps, chat: ChatEngine) 
     return reply.code(204).send();
   });
 
+  /** Optional per-model limits: positive token counts and yes/no capabilities, for listed models only. */
+  const checkModelInfo = (info: unknown, listed: string[]): Record<string, ModelInfo> => {
+    if (info === undefined || info === null) return {};
+    if (typeof info !== "object" || Array.isArray(info)) throw badRequest("modelInfo maps model ids to their limits.");
+    const out: Record<string, ModelInfo> = {};
+    for (const [model, raw] of Object.entries(info as Record<string, unknown>)) {
+      if (!listed.includes(model)) throw badRequest(`modelInfo: ${model} isn't one of the provider's models.`);
+      const r = (raw ?? {}) as Record<string, unknown>;
+      const one: ModelInfo = {};
+      for (const key of ["context", "maxTokens"] as const) {
+        if (r[key] === undefined) continue;
+        if (!Number.isSafeInteger(r[key]) || (r[key] as number) <= 0) throw badRequest(`modelInfo.${model}.${key} must be a positive whole number of tokens.`);
+        one[key] = r[key] as number;
+      }
+      for (const key of ["image", "reasoning"] as const) {
+        if (r[key] === undefined) continue;
+        if (typeof r[key] !== "boolean") throw badRequest(`modelInfo.${model}.${key} must be true or false.`);
+        one[key] = r[key] as boolean;
+      }
+      out[model] = one;
+    }
+    return out;
+  };
+
   app.get("/admin/routing", async () => models.routing());
 
   /** Lesson slots: `provider/model` ids on providers LearnHarness can reach directly. */
@@ -73,9 +97,14 @@ export function adminRoutes(app: FastifyInstance, deps: Deps, chat: ChatEngine) 
       const p = models.provider(providerId);
       if (!p) throw badRequest(`learn.${slot}: no provider called ${providerId}.`);
       if (!p.models.includes(rest.join("/"))) throw badRequest(`learn.${slot}: ${providerId} doesn't list the model ${rest.join("/")}.`);
-      if (!LEARN_PROVIDERS[p.npm]) throw badRequest(`learn.${slot}: lessons can use ${Object.keys(LEARN_PROVIDERS).join(", ")} providers for now.`);
+      if (!LEARN_PROVIDERS[p.npm] && p.npm !== CUSTOM_NPM) {
+        throw badRequest(`learn.${slot}: lessons can use ${[...Object.keys(LEARN_PROVIDERS), CUSTOM_NPM].join(", ")} providers.`);
+      }
       slots[slot] = ref;
     }
+    // LearnHarness takes one custom endpoint: every local slot must be on the same provider.
+    const custom = new Set(LEARN_SLOTS.map((s) => slots[s].split("/")[0]).filter((id) => models.provider(id)?.npm === CUSTOM_NPM));
+    if (custom.size > 1) throw badRequest("Lesson slots can use only one OpenAI-compatible endpoint; put several models behind one gateway.");
     return slots;
   };
 

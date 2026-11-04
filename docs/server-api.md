@@ -264,7 +264,8 @@ The admin decides which model serves each kind of work, either a local model on 
 - `fallback` is used when the primary is unreachable or rate limited.
 - API keys are write-only: responses mask them.
 - Note: Anatomy needs a strong agentic model for a long session; local models are likely to suit chat better than figures.
-- `learn` (optional): LearnHarness's model slots for lessons, `{ "strong": "provider/model", "cheap": "…", "vision": "…" }`. For now they must be Google, Anthropic or OpenAI providers. Saving restarts learners' lesson processes once they are idle.
+- `learn` (optional): LearnHarness's model slots for lessons, `{ "strong": "provider/model", "cheap": "…", "vision": "…" }`. Google, Anthropic or OpenAI providers, or at most one OpenAI-compatible provider. Saving restarts learners' lesson processes once they are idle.
+- A provider may carry `modelInfo`: per model, `{ "context": tokens, "maxTokens": tokens, "image": bool, "reasoning": bool }`. Use it for local endpoints, which usually don't publish these limits.
 
 ### Lessons
 

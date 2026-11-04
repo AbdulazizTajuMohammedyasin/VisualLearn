@@ -126,6 +126,8 @@ const MIGRATIONS: string[] = [
      created_at INTEGER NOT NULL
    );
    CREATE INDEX documents_by_conversation ON documents (conversation_id);`,
+  // 6: what a local endpoint's models can do (it may publish no metadata)
+  `ALTER TABLE providers ADD COLUMN model_info_json TEXT NOT NULL DEFAULT '{}';`,
 ];
 
 /** Opens (or creates) the database and brings its schema up to date. */

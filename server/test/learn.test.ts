@@ -142,9 +142,7 @@ test("the admin's lesson models and keys reach the process; changing them restar
   const admin = await signIn(server, "admin@example.com");
   const put = (url: string, payload: object) => server.app.inject({ method: "PUT", url, headers: admin.headers, payload });
   await put("/v1/admin/providers/google", { kind: "api", npm: "@ai-sdk/google", apiKey: "gm-key", models: ["gemini-a", "gemini-b"] });
-  await put("/v1/admin/providers/lab", { kind: "local", npm: "@ai-sdk/openai-compatible", baseUrl: "http://gpu:8000/v1", models: ["qwen"] });
   const routing = (learn: object) => put("/v1/admin/routing", { chat: { model: "dev/canned" }, figures: { model: "dev/canned" }, learn });
-  assert.equal((await routing({ strong: "lab/qwen", cheap: "lab/qwen", vision: "lab/qwen" })).statusCode, 400, "local endpoints aren't wired to lessons yet");
   assert.equal((await routing({ strong: "google/gemini-x", cheap: "google/gemini-a", vision: "google/gemini-a" })).statusCode, 400);
   assert.equal((await routing({ strong: "google/gemini-a", cheap: "google/gemini-b", vision: "google/gemini-b" })).statusCode, 200);
 
@@ -237,4 +235,50 @@ test("a learner's process gets host basics, its own paths and keys, and none of 
     delete process.env.VL_SIGNING_SECRET_FOR_TEST;
     delete process.env.ANTHROPIC_API_KEY_FOR_TEST;
   }
+});
+
+test("a university endpoint becomes LearnHarness's custom provider, bound to its URL, with the key only in the environment", async () => {
+  const { server, fake } = await setup();
+  const admin = await signIn(server, "admin@example.com");
+  const put = (url: string, payload: object) => server.app.inject({ method: "PUT", url, headers: admin.headers, payload });
+  const lab = {
+    kind: "local", npm: "@ai-sdk/openai-compatible", baseUrl: "https://gpu.uni.example/v1/", apiKey: "lab-key", models: ["qwen-big", "qwen-vl"],
+    modelInfo: { "qwen-big": { context: 131072, maxTokens: 16384, reasoning: true }, "qwen-vl": { context: 65536, image: true } },
+  };
+  assert.equal((await put("/v1/admin/providers/lab", { ...lab, modelInfo: { other: {} } })).statusCode, 400, "limits only for listed models");
+  assert.equal((await put("/v1/admin/providers/lab", { ...lab, modelInfo: { "qwen-big": { context: -5 } } })).statusCode, 400);
+  assert.equal((await put("/v1/admin/providers/lab", lab)).statusCode, 200);
+  await put("/v1/admin/providers/lab2", { kind: "local", npm: "@ai-sdk/openai-compatible", baseUrl: "http://other:8000/v1", models: ["m"] });
+  await put("/v1/admin/providers/google", { kind: "api", npm: "@ai-sdk/google", apiKey: "gm-key", models: ["gemini-a"] });
+  const routing = (learn: object) => put("/v1/admin/routing", { chat: { model: "dev/canned" }, figures: { model: "dev/canned" }, learn });
+  assert.equal((await routing({ strong: "lab/qwen-big", cheap: "lab2/m", vision: "lab/qwen-vl" })).statusCode, 400, "one custom endpoint only");
+  assert.equal((await routing({ strong: "lab/qwen-big", cheap: "google/gemini-a", vision: "lab/qwen-vl" })).statusCode, 200);
+
+  const learner = await signIn(server);
+  await learn(server, learner.headers, "GET", "/api/chats");
+  const launch = fake.launches.at(-1)!;
+  const settings = JSON.parse(readFileSync(`${launch.dirs.data}/settings.json`, "utf8"));
+  assert.deepEqual(settings.models.strong, { model: { provider: "custom", id: "qwen-big" } });
+  assert.deepEqual(settings.models.cheap, { model: { provider: "google", id: "gemini-a" } });
+  assert.deepEqual(settings.models.vision, { model: { provider: "custom", id: "qwen-vl" } });
+  const cp = settings.customProvider;
+  assert.equal(cp.baseUrl, "https://gpu.uni.example/v1");
+  assert.equal(cp.authMode, "apiKey");
+  assert.match(cp.credentialBindingId, /^[a-f0-9]{32}$/);
+  assert.deepEqual(cp.models, [
+    { id: "qwen-big", context: 131072, maxTokens: 16384, reasoning: true },
+    { id: "qwen-vl", context: 65536, image: true },
+  ]);
+  const auth = JSON.parse(readFileSync(launch.dirs.auth, "utf8"));
+  assert.deepEqual(JSON.parse(auth.__learnharness_custom_provider_binding), { version: 1, id: cp.credentialBindingId, baseUrl: cp.baseUrl, authMode: "apiKey" });
+  assert.ok(!JSON.stringify(auth).includes("lab-key"), "the key is never written to disk");
+  assert.equal(launch.env.CUSTOM_OPENAI_API_KEY, "lab-key");
+  assert.equal(launch.env.GEMINI_API_KEY, "gm-key");
+
+  // Back to API models only: the custom section and binding go away.
+  await routing({ strong: "google/gemini-a", cheap: "google/gemini-a", vision: "google/gemini-a" });
+  await new Promise((r) => setTimeout(r, 20));
+  await learn(server, learner.headers, "GET", "/api/chats");
+  assert.equal(JSON.parse(readFileSync(`${launch.dirs.data}/settings.json`, "utf8")).customProvider, undefined);
+  assert.deepEqual(JSON.parse(readFileSync(launch.dirs.auth, "utf8")), {});
 });

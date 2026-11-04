@@ -102,7 +102,17 @@ ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 npx next build && node scripts/build-server.mjs
 ```
 
-Set the lesson models along with the other routes. `strong` runs the prober and teacher, `cheap` the background workers (research, demos, graph extraction), and `vision` the PDF reader and figure checks. For now they must be on Google, Anthropic or OpenAI providers. University-hosted OpenAI-compatible endpoints are next.
+Set the lesson models along with the other routes. `strong` runs the prober and teacher, `cheap` the background workers (research, demos, graph extraction), and `vision` the PDF reader and figure checks. They can be on Google, Anthropic or OpenAI providers, or on one OpenAI-compatible endpoint, such as a university's vLLM, SGLang or Ollama server. Put several local models behind one gateway, because LearnHarness takes a single custom endpoint.
+
+A local endpoint must have **tool calling** switched on: every lesson request carries tools (11 on the first turn). Because such servers rarely say what their models can do, give each model's limits when registering the provider. Otherwise LearnHarness assumes an 8,192-token context and a 4,096-token reply, which is too small for lessons:
+
+```sh
+curl -X PUT $API/v1/admin/providers/uni -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"   -d '{"kind":"local","npm":"@ai-sdk/openai-compatible","baseUrl":"https://gpu.uni.example/v1","apiKey":"…",
+       "models":["big-model","vision-model"],
+       "modelInfo":{"big-model":{"context":131072,"maxTokens":16384,"reasoning":true},"vision-model":{"context":65536,"image":true}}}'
+```
+
+The server writes the endpoint into each learner's LearnHarness settings with a fresh authorization binding, and passes its key only in the process environment (`CUSTOM_OPENAI_API_KEY`), never on disk.
 
 ```sh
 curl -X PUT $API/v1/admin/routing -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \

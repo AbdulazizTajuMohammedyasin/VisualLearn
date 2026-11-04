@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { Deps } from "./app.ts";
 import { ApiError, forbidden } from "./errors.ts";
-import type { ModelRegistry } from "./models.ts";
+import type { ModelRegistry, Provider } from "./models.ts";
 import type { RateLimiter } from "./ratelimit.ts";
 
 /**
@@ -59,22 +59,64 @@ export const LEARN_PROVIDERS: Record<string, { pi: string; envVar: string }> = {
 export const LEARN_SLOTS = ["strong", "cheap", "vision"] as const;
 export type LearnSlot = (typeof LEARN_SLOTS)[number];
 
-/** The admin's lesson models as LearnHarness settings, plus the keys they need. */
-export function learnModels(models: ModelRegistry): { settings: Record<LearnSlot, { model: { provider: string; id: string } }> | null; env: Record<string, string> } {
+/** An OpenAI-compatible endpoint (vLLM, SGLang, Ollama…): LearnHarness's one "custom" provider. */
+export const CUSTOM_NPM = "@ai-sdk/openai-compatible";
+
+/** What a learner's process is configured with: its settings sections, the auth record, and keys. */
+export interface LearnConfig {
+  models: Record<LearnSlot, { model: { provider: string; id: string } }> | null;
+  /** LearnHarness's `customProvider` settings section, when a slot is on a local endpoint. */
+  customProvider: Record<string, unknown> | null;
+  /** auth.json: the custom endpoint's authorization record, or empty. */
+  auth: Record<string, string>;
+  env: Record<string, string>;
+}
+
+/** The admin's lesson models in LearnHarness's terms. */
+export function learnConfig(models: ModelRegistry): LearnConfig {
+  const config: LearnConfig = { models: null, customProvider: null, auth: {}, env: {} };
   const slots = models.routing().learn;
-  if (!slots) return { settings: null, env: {} };
-  const settings = {} as Record<LearnSlot, { model: { provider: string; id: string } }>;
-  const env: Record<string, string> = {};
+  if (!slots) return config;
+  config.models = {} as NonNullable<LearnConfig["models"]>;
   for (const slot of LEARN_SLOTS) {
     const ref = slots[slot];
     const slash = ref.indexOf("/");
     const provider = models.provider(ref.slice(0, slash));
+    const id = ref.slice(slash + 1);
+    if (provider?.npm === CUSTOM_NPM && provider.baseUrl) {
+      config.models[slot] = { model: { provider: "custom", id } };
+      if (!config.customProvider) Object.assign(config, customEndpoint(provider));
+      continue;
+    }
     const mapping = provider && LEARN_PROVIDERS[provider.npm];
     if (!provider || !mapping) throw new Error(`Lesson slot ${slot} uses ${ref}, which LearnHarness can't reach`);
-    settings[slot] = { model: { provider: mapping.pi, id: ref.slice(slash + 1) } };
-    if (provider.apiKey) env[mapping.envVar] = provider.apiKey;
+    config.models[slot] = { model: { provider: mapping.pi, id } };
+    if (provider.apiKey) config.env[mapping.envVar] = provider.apiKey;
   }
-  return { settings, env };
+  return config;
+}
+
+/**
+ * LearnHarness only uses a custom endpoint whose settings and auth record carry
+ * the same random binding id, URL and mode (it never sends a key to a URL it
+ * wasn't bound to). The key itself goes in the environment, never on disk.
+ */
+function customEndpoint(p: Provider): Pick<LearnConfig, "customProvider" | "auth" | "env"> {
+  // The same canonical form as LearnHarness's normalizeBaseUrl, or the binding wouldn't match.
+  const baseUrl = new URL(p.baseUrl!.trim()).toString().replace(/\/+$/, "");
+  const authMode = p.apiKey ? "apiKey" : "keyless";
+  const id = randomBytes(16).toString("hex");
+  const info = p.modelInfo ?? {};
+  return {
+    customProvider: {
+      baseUrl,
+      authMode,
+      credentialBindingId: id,
+      models: p.models.map((m) => ({ id: m, ...info[m] })),
+    },
+    auth: { __learnharness_custom_provider_binding: JSON.stringify({ version: 1, id, baseUrl, authMode }) },
+    env: p.apiKey ? { CUSTOM_OPENAI_API_KEY: p.apiKey } : {},
+  };
 }
 
 interface Entry {
@@ -177,9 +219,11 @@ export class LearnPool {
   private async start(userId: string): Promise<Entry> {
     const dirs = this.dirs(userId);
     for (const d of [dirs.data, dirs.files, dirs.home]) mkdirSync(d, { recursive: true });
-    if (!existsSync(dirs.auth)) writeFileSync(dirs.auth, "{}\n", { mode: 0o600 });
-    const { settings, env } = learnModels(this.deps.models);
-    writeSettings(join(dirs.data, "settings.json"), settings);
+    const config = learnConfig(this.deps.models);
+    // The auth file holds no keys: only the custom endpoint's binding record, rewritten every start.
+    writeFileSync(dirs.auth, JSON.stringify(config.auth) + "\n", { mode: 0o600 });
+    writeSettings(join(dirs.data, "settings.json"), config);
+    const env = config.env;
     const instance = await this.options.launcher({
       userId,
       dirs,
@@ -216,16 +260,18 @@ export class LearnPool {
   }
 }
 
-/** Keeps the learner's own settings and sets the models to the admin's choice. */
-function writeSettings(file: string, models: object | null) {
+/** Keeps the learner's own settings and sets the models and endpoint to the admin's choice. */
+function writeSettings(file: string, config: LearnConfig) {
   let current: Record<string, unknown> = {};
   try {
     current = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
   } catch {
     // First start, or unreadable: start fresh.
   }
-  if (models) current.models = models;
-  else delete current.models;
+  for (const [key, value] of [["models", config.models], ["customProvider", config.customProvider]] as const) {
+    if (value) current[key] = value;
+    else delete current[key];
+  }
   writeFileSync(file, JSON.stringify(current, null, 2));
 }
 
