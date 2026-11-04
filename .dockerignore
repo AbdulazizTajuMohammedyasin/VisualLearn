@@ -6,3 +6,10 @@ gradle
 build
 .gradle
 .git
+# LearnHarness: build output, local session data and secrets stay out of the image.
+harness/.next
+harness/data
+harness/auth.json
+harness/.env*
+harness/*-credentials.json
+harness/tsconfig.tsbuildinfo
