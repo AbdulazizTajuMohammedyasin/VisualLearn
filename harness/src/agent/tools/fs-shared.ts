@@ -1,3 +1,4 @@
+import { existsSync, realpathSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -39,11 +40,48 @@ const EXCLUDED_DIR_NAMES = new Set(["node_modules", ".git", "Library", ".Trash"]
  *  (pi resolves against the project cwd; the harness's "project" is the
  *  learner's life, so the home directory is the anchor.) A leading `~` or
  *  `~/` is the home directory, as a shell would expand it — learners and
- *  models write paths that way. `~user` is not expanded. */
+ *  models write paths that way. `~user` is not expanded.
+ *
+ *  Hosted confinement (VisualLearn fork): when `LH_FILES_ROOT` is set, that
+ *  folder takes the home directory's place and nothing outside it can be
+ *  read — not by absolute path, `..`, or a symbolic link out of it. A hosted
+ *  server shares one machine between learners, so the home anchor would
+ *  expose the server's own files and other learners' data. */
 export function resolveSourcePath(p?: string): string {
-	if (!p) return os.homedir();
-	if (p === "~" || p.startsWith("~/") || p.startsWith(`~${path.sep}`)) return path.join(os.homedir(), p.slice(1));
-	return path.isAbsolute(p) ? p : path.join(os.homedir(), p);
+	const root = filesRoot();
+	const home = root ?? os.homedir();
+	let resolved: string;
+	if (!p) resolved = home;
+	else if (p === "~" || p.startsWith("~/") || p.startsWith(`~${path.sep}`)) resolved = path.join(home, p.slice(1));
+	else resolved = path.isAbsolute(p) ? p : path.join(home, p);
+	if (!root) return resolved;
+	resolved = path.resolve(resolved);
+	confine(resolved, root, p ?? "");
+	return resolved;
+}
+
+/** The hosted learner's files folder, or null on a personal install. */
+export function filesRoot(): string | null {
+	const root = process.env.LH_FILES_ROOT?.trim();
+	return root ? path.resolve(root) : null;
+}
+
+/** Refuses [resolved] unless it, and whatever it links to, lies inside [root]. */
+function confine(resolved: string, root: string, asked: string): void {
+	const inside = (base: string, target: string) => {
+		const rel = path.relative(base, target);
+		return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+	};
+	const refuse = () => {
+		throw new Error(`Only the learner's own files can be read here; "${asked || resolved}" is outside them.`);
+	};
+	if (!inside(root, resolved)) refuse();
+	// Links are resolved on the nearest part of the path that exists, so a
+	// link inside the folder can't lead out of it.
+	let probe = resolved;
+	while (!existsSync(probe) && path.dirname(probe) !== probe) probe = path.dirname(probe);
+	if (!existsSync(root)) return;
+	if (!inside(realpathSync(root), realpathSync(probe))) refuse();
 }
 
 /** pi's formatSize idiom (50KB prints as "50.0KB"). */
