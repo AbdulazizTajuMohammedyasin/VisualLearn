@@ -78,11 +78,12 @@ class LessonRepository(private val api: LearnApi, private val figures: FiguresRe
     suspend fun start(goal: String, pdf: PdfAttachment? = null): String {
         pdf?.let { if (it.bytes > MAX_PDF_BYTES) throw IllegalArgumentException("${it.name} is too big. The limit is 25 MB.") }
         val title = goal.lineSequence().first().take(60).ifBlank { pdf?.name?.removeSuffix(".pdf") ?: "New lesson" }
-        val id = api.createLesson(title)
+        // The PDF goes up first, so a failed upload doesn't leave an empty lesson behind.
         val input = if (pdf == null) LessonInput.text(goal) else {
             val path = withContext(Dispatchers.IO) { api.uploadLessonFile(pdf.name, pdf.read()) }
             LessonInput.withPdf(path, goal.ifBlank { "Teach me what's in it." })
         }
+        val id = api.createLesson(title)
         open(id)
         send(input)
         refreshLessons()
