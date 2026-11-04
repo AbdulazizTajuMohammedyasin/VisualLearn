@@ -25,7 +25,7 @@ Debug builds may use plain HTTP to `10.0.2.2` and `localhost`; release builds ne
 
 ## Container
 
-`server/Dockerfile` builds an image with Node 24, Chromium, OpenCode and Anatomy pinned to a commit. Build it from the repository root:
+`server/Dockerfile` builds an image with Node 24, Chromium, OpenCode, Anatomy pinned to a commit, and the LearnHarness standalone build for lessons (`VL_HARNESS_DIR` is set). Build it from the repository root:
 
 ```sh
 docker build -f server/Dockerfile -t visuallearn-server .
@@ -93,7 +93,8 @@ Lessons (probing, a plan, teaching with checks, practice and the knowledge graph
 4. Each process is started with a random per-launch secret (LearnHarness's `LH_DESKTOP_API_SECRET`). The server adds it to forwarded requests, and the process refuses any request without it, so nothing else on the machine can reach a learner's lessons.
 5. Only learner routes are forwarded: lessons, practice, the knowledge graph and its imports, and background work. Keys, providers, subscriptions, Claude Code, prompts and settings changes answer `403`. New messages and imports count against `VL_RATE_WORK_PER_MIN`.
 6. Deleting an account stops its process and deletes its folder.
-7. When figures are on, each process also gets `VL_FIGURE_URL` (this server's `/v1/internal`, on `127.0.0.1`) and a learner token. That gives the teacher a `figure` tool: it asks this server for a 3D Anatomy figure for that learner, which joins the same fair-share queue, appears in the learner's figures, and comes back into the lesson with its figure id. The internal routes accept only requests from this machine that carry a valid learner token, and only for that learner's figures.
+7. What the process prints goes to `data/learn/<user id>/harness.log`, rewritten at each start and capped at 5 MB. Background failures, such as a knowledge graph update that a model refused, show up only there.
+8. When figures are on, each process also gets `VL_FIGURE_URL` (this server's `/v1/internal`, on `127.0.0.1`) and a learner token. That gives the teacher a `figure` tool: it asks this server for a 3D Anatomy figure for that learner, which joins the same fair-share queue, appears in the learner's figures, and comes back into the lesson with its figure id. The internal routes accept only requests from this machine that carry a valid learner token, and only for that learner's figures.
 
 Build LearnHarness once, and again after changing `harness/`. On Windows, stop this server first: running lesson processes keep the build folder locked.
 
@@ -120,6 +121,8 @@ curl -X PUT $API/v1/admin/routing -H "Authorization: Bearer $TOKEN" -H "Content-
   -d '{"chat":{"model":"google/gemini-3.8-flash"},"figures":{"model":"google/gemini-3.8-flash"},
        "learn":{"strong":"google/gemini-3.8-flash","cheap":"google/gemini-3.6-flash","vision":"google/gemini-2.5-flash"}}'
 ```
+
+A free Gemini key isn't enough for lessons: the free tier allows about 20 requests a day per model, and one lesson turn makes several, and so does each knowledge graph update. When a model is over its limit, lessons show "The AI service has reached its usage limit for now". Use a paid key or local models.
 
 ## How a figure job runs
 

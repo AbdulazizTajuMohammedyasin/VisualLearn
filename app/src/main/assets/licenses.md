@@ -26,6 +26,10 @@ Quizzes, flashcards and step-by-step explanations are drawn with a bundled page 
 
 **Zod** by Colin McDonnell: MIT License.
 
+## Lessons
+
+Lessons, practice and What you know run on VisualLearn's servers with **LearnHarness** by Amos Blomqvist, GNU Affero General Public License 3.0: https://github.com/amosblomqvist/learnharness. The app grades your answers by LearnHarness's rules. You're entitled to the source of the LearnHarness version a server runs, including its changes.
+
 ## Figures
 
 Figures are built on VisualLearn's servers with **Anatomy** by Ryan (wheresryan22), MIT License: https://github.com/wheresryan22/anatomy
