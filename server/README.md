@@ -114,6 +114,12 @@ curl -X PUT $API/v1/admin/providers/uni -H "Authorization: Bearer $TOKEN" -H "Co
        "modelInfo":{"big-model":{"context":131072,"maxTokens":16384,"reasoning":true},"vision-model":{"context":65536,"image":true}}}'
 ```
 
+Before routing lessons to a model, check it can run them. `scripts/check-models.ts` sends a few requests per model: a streamed reply, picking the right tool among eleven, the knowledge graph's structured tool call, finding a fact in a long context, and reading an image (needed only for `vision`). It exits non-zero if a model fails a check lessons need.
+
+```sh
+node scripts/check-models.ts --base https://gpu.uni.example/v1 --key "$KEY" --context 32000 big-model vision-model
+```
+
 The server writes the endpoint into each learner's LearnHarness settings with a fresh authorization binding, and passes its key only in the process environment (`CUSTOM_OPENAI_API_KEY`), never on disk.
 
 ```sh
