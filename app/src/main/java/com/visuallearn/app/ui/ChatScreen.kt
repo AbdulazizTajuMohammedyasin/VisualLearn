@@ -37,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -121,6 +122,8 @@ fun ChatScreen(
     /** Lessons on LearnHarness; null when the server has none (the debug fake). */
     lessons: LessonRepository? = null,
     onOpenLessons: () -> Unit = {},
+    /** What the learner knows; null when lessons aren't available. */
+    onOpenKnowledge: (() -> Unit)? = null,
     onOpenLesson: (String) -> Unit = {},
 ) {
     val state by chat.state.collectAsStateWithLifecycle()
@@ -154,6 +157,7 @@ fun ChatScreen(
                 DrawerItem("Explore figures", Icons.Filled.Search) { closeDrawer(); onOpenExplore() }
                 DrawerItem("My figures", Icons.Filled.Star) { closeDrawer(); onOpenFigures() }
                 if (lessons != null) DrawerItem("Lessons", Icons.AutoMirrored.Filled.List) { closeDrawer(); onOpenLessons() }
+                if (onOpenKnowledge != null) DrawerItem("What you know", Icons.Filled.Info) { closeDrawer(); onOpenKnowledge() }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 24.dp))
                 Text("Chats", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 28.dp, bottom = 4.dp))

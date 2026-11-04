@@ -8,6 +8,7 @@ import com.visuallearn.app.chat.ChatRepository
 import com.visuallearn.app.figures.FigureCheckWorker
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.gallery.Gallery
+import com.visuallearn.app.learn.KnowledgeRepository
 import com.visuallearn.app.learn.LearnApi
 import com.visuallearn.app.learn.LessonRepository
 import com.visuallearn.app.offline.Connectivity
@@ -46,6 +47,9 @@ class VisualLearnApp : Application() {
     /** Lessons on LearnHarness; null without a real server (the debug fake has none). */
     var lessons: LessonRepository? = null
         private set
+    /** What the learner knows, from the same LearnHarness lessons. */
+    var knowledge: KnowledgeRepository? = null
+        private set
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
@@ -58,6 +62,7 @@ class VisualLearnApp : Application() {
         figures = FiguresRepository(this, api, store)
         chat = ChatRepository(api, figures, store)
         lessons = (api as? LearnApi)?.let { LessonRepository(it, figures) }
+        knowledge = (api as? LearnApi)?.let { KnowledgeRepository(it) }
         gallery = Gallery(this)
         connectivity = Connectivity(this)
         sync = SyncManager(api, store, chat, figures, scope)

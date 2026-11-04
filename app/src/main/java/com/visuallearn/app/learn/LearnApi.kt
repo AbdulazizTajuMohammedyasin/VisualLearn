@@ -25,6 +25,12 @@ interface LearnApi {
     /** The teacher's background work, by the tool call that started it. */
     suspend fun lessonActivity(id: String): Map<String, JobProgress>
 
+    /** What the learner knows so far, from every lesson and imported notes. */
+    suspend fun knowledge(): Knowledge
+
+    /** Reads a file of notes (a PDF or text) into what the learner knows; takes a minute or more. */
+    suspend fun importNotes(name: String, bytes: ByteArray): NotesImport
+
     /** The running turn's agent events; completes when the turn is over. */
     fun lessonEvents(id: String): Flow<JSONObject>
 }

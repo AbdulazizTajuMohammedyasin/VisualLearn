@@ -11,9 +11,13 @@ import com.visuallearn.app.api.ApiJson.parseTokens
 import com.visuallearn.app.api.ApiJson.parseUser
 import com.visuallearn.app.auth.TokenStore
 import com.visuallearn.app.learn.JobProgress
+import com.visuallearn.app.learn.Knowledge
+import com.visuallearn.app.learn.KnowledgeJson
 import com.visuallearn.app.learn.LearnApi
 import com.visuallearn.app.learn.LessonJson
 import com.visuallearn.app.learn.LessonSummary
+import com.visuallearn.app.learn.NotesImport
+import com.visuallearn.app.learn.ProviderErrors
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -21,6 +25,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
@@ -45,6 +50,7 @@ class HttpApi(
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
     private val streamClient = client.newBuilder().readTimeout(60, TimeUnit.SECONDS).build()
+    private val slowClient = client.newBuilder().readTimeout(10, TimeUnit.MINUTES).build()
 
     override suspend fun signInWithGoogle(idToken: String): Tokens =
         session(JSONObject().put("provider", "google").put("idToken", idToken))
@@ -193,6 +199,24 @@ class HttpApi(
         call("DELETE", "/learn/api/chats/$id?mode=preserve-graph")
     }
 
+    override suspend fun knowledge(): Knowledge = KnowledgeJson.knowledge(call("GET", "/learn/api/graph"))
+
+    override suspend fun importNotes(name: String, bytes: ByteArray): NotesImport {
+        val type = if (name.endsWith(".pdf", ignoreCase = true)) PDF else "text/plain".toMediaType()
+        val form = MultipartBody.Builder().setType(MultipartBody.FORM).addFormDataPart("files", name, bytes.toRequestBody(type)).build()
+        val response = call("POST", "/learn/api/graph/import", raw = form, slow = true)
+        val result = response.optJSONArray("results")?.optJSONObject(0)
+            ?: return NotesImport(name, false, 0, response.optString("error").ifBlank { "Nothing was imported." })
+        return NotesImport(
+            name = name,
+            ok = result.optBoolean("ok"),
+            ideas = result.optJSONObject("stats")?.optInt("nodes") ?: 0,
+            // LearnHarness warns about scanner errors for every PDF; only skipped pages are worth saying.
+            message = if (result.optBoolean("ok")) result.optString("notice").removePrefix("Scanned pages may have errors.").trim().ifBlank { null }
+            else result.optString("error").let { ProviderErrors.known(it) ?: ProviderErrors.message(it).take(300) }.ifBlank { null },
+        )
+    }
+
     override suspend fun uploadLessonFile(name: String, pdf: ByteArray): String {
         val path = "/learn/files?name=" + java.net.URLEncoder.encode(name, "UTF-8")
         return call("POST", path, raw = pdf.toRequestBody(PDF)).getString("path")
@@ -227,10 +251,12 @@ class HttpApi(
         auth: Boolean = true,
         idempotent: Boolean = false,
         raw: RequestBody? = null,
+        /** For calls that wait on model work, like a notes import. */
+        slow: Boolean = false,
     ): JSONObject = withContext(Dispatchers.IO) {
         val idempotencyKey = if (idempotent) UUID.randomUUID().toString() else null
         repeat(2) { attempt ->
-            client.newCall(request(method, path, raw ?: body?.toString()?.toRequestBody(JSON), auth, idempotencyKey)).execute().use { response ->
+            (if (slow) slowClient else client).newCall(request(method, path, raw ?: body?.toString()?.toRequestBody(JSON), auth, idempotencyKey)).execute().use { response ->
                 // One retry after refreshing an expired access token.
                 if (response.code == 401 && auth && attempt == 0 && refresh()) return@use
                 return@withContext parse(response)

@@ -24,6 +24,7 @@ import com.visuallearn.app.ui.FigureScreen
 import com.visuallearn.app.ui.FiguresScreen
 import com.visuallearn.app.ui.GalleryFigureScreen
 import com.visuallearn.app.ui.LessonScreen
+import com.visuallearn.app.ui.KnowledgeScreen
 import com.visuallearn.app.ui.LessonsScreen
 import com.visuallearn.app.ui.LicensesScreen
 import com.visuallearn.app.ui.SettingsScreen
@@ -81,6 +82,7 @@ private sealed interface Screen {
     data object Licenses : Screen
     data object Lessons : Screen
     data class Lesson(val id: String) : Screen
+    data object Knowledge : Screen
 }
 
 private fun Screen.encode(): String = when (this) {
@@ -94,6 +96,7 @@ private fun Screen.encode(): String = when (this) {
     Screen.Licenses -> "licenses"
     Screen.Lessons -> "lessons"
     is Screen.Lesson -> "lesson:$id"
+    Screen.Knowledge -> "knowledge"
 }
 
 private fun decode(s: String): Screen = when {
@@ -101,6 +104,7 @@ private fun decode(s: String): Screen = when {
     s.startsWith("gallery:") -> Screen.GalleryFigure(s.removePrefix("gallery:"))
     s.startsWith("lesson:") -> Screen.Lesson(s.removePrefix("lesson:"))
     s == "lessons" -> Screen.Lessons
+    s == "knowledge" -> Screen.Knowledge
     s == "figures" -> Screen.Figures
     s == "settings" -> Screen.Settings
     s == "explore" -> Screen.Explore
@@ -153,6 +157,7 @@ private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<S
             lessons = app.lessons,
             onOpenLessons = { push(Screen.Lessons) },
             onOpenLesson = { push(Screen.Lesson(it)) },
+            onOpenKnowledge = if (app.knowledge != null) ({ push(Screen.Knowledge) }) else null,
         )
         is Screen.Figure -> FigureScreen(app.figures, screen.id, darkFigures, onBack = ::pop)
         Screen.Figures -> FiguresScreen(app.figures, onOpen = { push(Screen.Figure(it)) }, onBack = ::pop)
@@ -173,5 +178,6 @@ private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<S
         is Screen.Lesson -> app.lessons?.let {
             LessonScreen(it, app.figures, screen.id, onOpenFigure = { id -> push(Screen.Figure(id)) }, onBack = ::pop)
         } ?: pop()
+        Screen.Knowledge -> app.knowledge?.let { KnowledgeScreen(it, onOpenLesson = { id -> push(Screen.Lesson(id)) }, onBack = ::pop) } ?: pop()
     }
 }

@@ -299,14 +299,25 @@ object LessonJson {
         else -> ""
     }
 
-    /** Provider errors arrive as raw JSON; show their message. */
-    private fun problemText(raw: String): String {
+    private fun problemText(raw: String): String =
+        ProviderErrors.known(raw) ?: "The teacher couldn't answer: ${ProviderErrors.message(raw).take(200)}"
+}
+
+/** Model provider errors, which LearnHarness passes on as raw JSON, as plain sentences. */
+object ProviderErrors {
+    /** The innermost message out of the JSON the error arrives in. */
+    fun message(raw: String): String {
         val message = Regex("\"message\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"").findAll(raw).map { it.groupValues[1] }.lastOrNull()
-        val text = (message ?: raw).replace("\\n", " ").replace("\\\"", "\"").trim()
+        return (message ?: raw).replace("\\n", " ").replace("\\\"", "\"").trim()
+    }
+
+    /** Usage limits and overload in words; null for any other error. */
+    fun known(raw: String): String? {
+        val text = message(raw)
         return when {
             Regex("quota|RESOURCE_EXHAUSTED|billing", RegexOption.IGNORE_CASE).containsMatchIn(text) -> "The AI service has reached its usage limit for now. Try again later."
             Regex("high demand|overloaded|503|unavailable", RegexOption.IGNORE_CASE).containsMatchIn(text) -> "The AI service is busy right now. Try again in a minute."
-            else -> "The teacher couldn't answer: ${text.take(200)}"
+            else -> null
         }
     }
 }
