@@ -7,7 +7,7 @@ import { ChatEngine, chatRoutes } from "./chat.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { documentRoutes, Documents } from "./documents.ts";
-import { learnRoutes, type LearnPool } from "./learn.ts";
+import { internalFigureRoutes, learnRoutes, type LearnPool } from "./learn.ts";
 import { ApiError } from "./errors.ts";
 import { figureRoutes, pageRoutes, type Figures } from "./figures.ts";
 import { syncRoutes } from "./sync.ts";
@@ -105,6 +105,8 @@ export async function buildApp(deps: Deps, options: { logger?: boolean; env?: No
 
       v1.get("/health", async () => ({ ok: true }));
       if (deps.figures) pageRoutes(v1, deps.figures);
+      // Lessons' LearnHarness processes ask for figures here, with a learner token.
+      if (deps.figures && deps.learn) internalFigureRoutes(v1, deps, deps.figures, limits.work);
 
       v1.register(async (auth) => {
         auth.addHook("onRequest", async (request) => limits.auth.hit(`ip:${request.ip}`));

@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { createServer } from "node:net";
 import { join } from "node:path";
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Deps } from "./app.ts";
-import { ApiError, forbidden } from "./errors.ts";
+import { ApiError, badRequest, forbidden, notFound } from "./errors.ts";
+import type { Figures } from "./figures.ts";
 import type { ModelRegistry, Provider } from "./models.ts";
 import type { RateLimiter } from "./ratelimit.ts";
 
@@ -227,7 +228,15 @@ export class LearnPool {
     const instance = await this.options.launcher({
       userId,
       dirs,
-      env: { ...env, LH_DATA_DIR: dirs.data, LH_AUTH_FILE: dirs.auth, LH_FILES_ROOT: dirs.files, HOME: dirs.home, USERPROFILE: dirs.home },
+      env: {
+        ...env,
+        ...this.figureEnv(userId),
+        LH_DATA_DIR: dirs.data,
+        LH_AUTH_FILE: dirs.auth,
+        LH_FILES_ROOT: dirs.files,
+        HOME: dirs.home,
+        USERPROFILE: dirs.home,
+      },
     });
     const entry: Entry = { instance, active: 0, lastUsed: this.deps.now(), stale: false };
     this.running.set(userId, entry);
@@ -235,6 +244,15 @@ export class LearnPool {
       if (this.running.get(userId) === entry) this.running.delete(userId);
     });
     return entry;
+  }
+
+  /** Lets the learner's lessons ask this server for 3D figures (see internalFigureRoutes). */
+  private figureEnv(userId: string): Record<string, string> {
+    if (!this.deps.figures) return {};
+    return {
+      VL_FIGURE_URL: `http://127.0.0.1:${this.deps.config.port}/v1/internal`,
+      VL_FIGURE_TOKEN: learnerToken(this.deps.config.signingSecret, userId),
+    };
   }
 
   private async stop(userId: string, entry: Entry) {
@@ -452,6 +470,60 @@ export function learnRoutes(app: FastifyInstance, deps: Deps, pool: LearnPool, w
         release();
       });
       upstream.end(body ?? undefined);
+    });
+  });
+}
+
+// --- figures for lessons ---
+
+/** What a learner's process presents to ask for figures: their id, signed by this server. */
+export function learnerToken(signingSecret: string, userId: string): string {
+  return `${userId}.${createHmac("sha256", signingSecret).update(`learner:${userId}`).digest("base64url")}`;
+}
+
+function learnerFromToken(signingSecret: string, token: string | undefined): string | null {
+  if (!token) return null;
+  const userId = token.slice(0, token.indexOf("."));
+  if (!userId) return null;
+  const expected = Buffer.from(learnerToken(signingSecret, userId));
+  const given = Buffer.from(token);
+  return expected.length === given.length && timingSafeEqual(expected, given) ? userId : null;
+}
+
+/**
+ * `/v1/internal/figures`: LearnHarness's `figure` job asks for 3D figures here on
+ * its learner's behalf (harness/src/agent/subagents/figure-client.ts). Only from
+ * this machine, only with the learner token the process was started with, and
+ * only for that learner's own figures. They join the same fair-share queue and
+ * appear in the learner's figures like any other.
+ */
+export function internalFigureRoutes(app: FastifyInstance, deps: Deps, figures: Figures, work: RateLimiter) {
+  app.register(async (scope) => {
+    scope.addHook("onRequest", async (request) => {
+      const local = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(request.socket.remoteAddress ?? "");
+      const userId = learnerFromToken(deps.config.signingSecret, request.headers["x-visuallearn-learner"] as string | undefined);
+      if (!local || !userId) throw forbidden();
+      (request as unknown as { learnerId: string }).learnerId = userId;
+    });
+    const learner = (request: FastifyRequest) => (request as unknown as { learnerId: string }).learnerId;
+    const own = (request: FastifyRequest) => {
+      const f = figures.get((request.params as { id: string }).id);
+      if (!f || f.user_id !== learner(request)) throw notFound("This figure");
+      return f;
+    };
+
+    scope.post("/internal/figures", async (request, reply) => {
+      const body = (request.body ?? {}) as { prompt?: unknown };
+      if (typeof body.prompt !== "string" || !body.prompt.trim()) throw badRequest("Describe what the figure should show.");
+      work.hit(learner(request));
+      const id = figures.create(learner(request), body.prompt, null);
+      return reply.code(201).send(figures.toJson(figures.get(id)!));
+    });
+    scope.get("/internal/figures/:id", async (request) => figures.toJson(own(request)));
+    scope.post("/internal/figures/:id/cancel", async (request) => {
+      const f = own(request);
+      if (f.status === "queued" || f.status === "running") figures.cancel(f.id);
+      return figures.toJson(own(request));
     });
   });
 }

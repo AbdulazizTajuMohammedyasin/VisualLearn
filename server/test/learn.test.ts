@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { learnAllowed, learnEnv, type LearnInstance, type LearnLaunch, type LearnLauncher } from "../src/learn.ts";
+import { learnAllowed, learnEnv, learnerToken, type LearnInstance, type LearnLaunch, type LearnLauncher } from "../src/learn.ts";
 import { signIn, testServer, type TestServer } from "./helpers.ts";
 
 interface Seen {
@@ -281,4 +281,32 @@ test("a university endpoint becomes LearnHarness's custom provider, bound to its
   await learn(server, learner.headers, "GET", "/api/chats");
   assert.equal(JSON.parse(readFileSync(`${launch.dirs.data}/settings.json`, "utf8")).customProvider, undefined);
   assert.deepEqual(JSON.parse(readFileSync(launch.dirs.auth, "utf8")), {});
+});
+
+test("a learner's lessons can ask for 3D figures, only for that learner and only from this machine", async () => {
+  const { server, fake } = await setup();
+  const a = await signIn(server, "a@example.com");
+  const b = await signIn(server, "b@example.com");
+  await learn(server, a.headers, "GET", "/api/chats");
+  const env = fake.launches[0].env;
+  assert.equal(env.VL_FIGURE_URL, `http://127.0.0.1:${server.deps.config.port}/v1/internal`);
+  assert.equal(env.VL_FIGURE_TOKEN, learnerToken(server.deps.config.signingSecret, a.user.id));
+
+  const internal = (method: string, url: string, token: string | undefined, payload?: object, remoteAddress?: string) =>
+    server.app.inject({ method: method as "GET", url: `/v1/internal${url}`, headers: token ? { "x-visuallearn-learner": token } : {}, payload, remoteAddress });
+  assert.equal((await internal("POST", "/figures", undefined, { prompt: "x" })).statusCode, 403);
+  assert.equal((await internal("POST", "/figures", `${a.user.id}.forged`, { prompt: "x" })).statusCode, 403);
+  assert.equal((await internal("POST", "/figures", env.VL_FIGURE_TOKEN, { prompt: "x" }, "10.0.0.7")).statusCode, 403, "not from another machine");
+
+  const created = await internal("POST", "/figures", env.VL_FIGURE_TOKEN, { title: "Engine", prompt: "One cylinder of a four-stroke engine." });
+  assert.equal(created.statusCode, 201);
+  const id = created.json().id;
+  assert.equal((await internal("GET", `/figures/${id}`, env.VL_FIGURE_TOKEN)).json().prompt, "One cylinder of a four-stroke engine.");
+  const mine = (await server.app.inject({ method: "GET", url: "/v1/figures", headers: a.headers })).json().items.map((f: { id: string }) => f.id);
+  assert.ok(mine.includes(id), "it shows in the learner's figures");
+  const bToken = learnerToken(server.deps.config.signingSecret, b.user.id);
+  assert.equal((await internal("GET", `/figures/${id}`, bToken)).statusCode, 404, "another learner can't see it");
+  const cancelled = await internal("POST", `/figures/${id}/cancel`, env.VL_FIGURE_TOKEN);
+  assert.ok(["cancelled", "succeeded"].includes(cancelled.json().status));
+
 });
