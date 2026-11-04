@@ -264,6 +264,11 @@ The admin decides which model serves each kind of work, either a local model on 
 - `fallback` is used when the primary is unreachable or rate limited.
 - API keys are write-only: responses mask them.
 - Note: Anatomy needs a strong agentic model for a long session; local models are likely to suit chat better than figures.
+- `learn` (optional): LearnHarness's model slots for lessons, `{ "strong": "provider/model", "cheap": "…", "vision": "…" }`. For now they must be Google, Anthropic or OpenAI providers. Saving restarts learners' lesson processes once they are idle.
+
+### Lessons
+
+`/v1/learn/api/...` forwards a signed-in learner's request to their own LearnHarness process (see `server/README.md`). The paths, bodies and event streams are LearnHarness's own: for example `POST /v1/learn/api/chats` creates a session, `POST /v1/learn/api/chat` with `{ chatId, input }` sends a message or an answer, and `GET /v1/learn/api/chats/{id}/stream` streams the turn. Administrator routes (keys, providers, subscriptions, prompts, settings changes) answer `403`. `503 lessons_busy` means every lesson slot is in use; retry after `Retry-After`. `GET /admin/capacity` reports `lessons: { running, starting, active, maxInstances }`.
 
 ### Content and accounts
 

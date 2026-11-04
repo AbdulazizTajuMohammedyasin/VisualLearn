@@ -62,6 +62,10 @@ VL_OPENCODE_BIN=$(which opencode) npm run test:opencode   # the real OpenCode ag
 | `VL_FIGURE_TIMEOUT_MIN` | `120` | A figure job is stopped after this long. |
 | `VL_CHROME_BIN` | `CHROME_PATH` | Chrome or Chromium that draws each finished figure's preview image. Empty: no previews. |
 | `VL_CHROME_NO_SANDBOX` | empty | `1` runs Chrome without its sandbox, which most containers need. The image sets it. |
+| `VL_HARNESS_DIR` | empty | The `harness/` folder (LearnHarness). Turns on lessons at `/v1/learn`. It must be built first; see "Lessons" below. |
+| `VL_HARNESS_DEV` | empty | `1` runs `next dev` instead of the build. `next dev` can't run twice in one folder, so only one learner at a time. For development. |
+| `VL_LEARN_MAX_INSTANCES` | `20` | Learners whose LearnHarness process may run at once. When full, the longest-idle one is stopped; if none is idle the request gets `503 lessons_busy`. |
+| `VL_LEARN_IDLE_MIN` | `15` | A learner's process stops after this many minutes without requests. |
 | `VL_UI_PROMPT` | `../ui-library/dist/system-prompt.md` | The OpenUI prompt from `npm run prompt`. |
 | `VL_MIN_UI_LIBRARY` | `1.0.0` | Apps reporting an older UI library get `426`. |
 | `VL_RATE_AUTH_PER_MIN`, `VL_RATE_REQUESTS_PER_MIN`, `VL_RATE_WORK_PER_MIN` | `30`, `600`, `30` | Abuse limits: sign-in calls per IP, requests per user, and new messages or figures per user. |
@@ -78,6 +82,33 @@ curl -X PUT $API/v1/admin/routing -H "Authorization: Bearer $TOKEN" -H "Content-
 ```
 
 Local models use `"kind":"local","npm":"@ai-sdk/openai-compatible","baseUrl":"http://…/v1"` (vLLM, Ollama, LM Studio). Chat calls the routed model through the Vercel AI SDK. Each figure job runs `opencode run` with a config generated from the figure route. The API key is passed through the job's environment and never written to disk.
+
+## Lessons (LearnHarness)
+
+Lessons (probing, a plan, teaching with checks, practice and the knowledge graph) come from the LearnHarness fork in `harness/`. LearnHarness serves one person per process, so this server gives each learner their own:
+
+1. A request to `/v1/learn/api/...` from a signed-in learner starts that learner's process if it isn't running: `harness/.next/standalone/server.js` on a free `127.0.0.1` port.
+2. The process gets its own folders under `data/learn/<user id>/`: `data/` (lessons, graph, settings), `files/` (the only folder its file tools may read, via `LH_FILES_ROOT`), `home/`, and an empty `auth.json`. Its environment holds only host basics, those paths, and the provider keys for the admin's lesson models. Nothing else of this server's environment is passed on.
+3. Its `settings.json` gets the admin's lesson models (`learn` in the routing) at every start. Changing the routing restarts each process once it's idle.
+4. Each process is started with a random per-launch secret (LearnHarness's `LH_DESKTOP_API_SECRET`). The server adds it to forwarded requests, and the process refuses any request without it, so nothing else on the machine can reach a learner's lessons.
+5. Only learner routes are forwarded: lessons, practice, the knowledge graph and its imports, and background work. Keys, providers, subscriptions, Claude Code, prompts and settings changes answer `403`. New messages and imports count against `VL_RATE_WORK_PER_MIN`.
+6. Deleting an account stops its process and deletes its folder.
+
+Build LearnHarness once, and again after changing `harness/`:
+
+```sh
+cd harness
+ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
+npx next build && node scripts/build-server.mjs
+```
+
+Set the lesson models along with the other routes. `strong` runs the prober and teacher, `cheap` the background workers (research, demos, graph extraction), and `vision` the PDF reader and figure checks. For now they must be on Google, Anthropic or OpenAI providers. University-hosted OpenAI-compatible endpoints are next.
+
+```sh
+curl -X PUT $API/v1/admin/routing -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"chat":{"model":"google/gemini-3.8-flash"},"figures":{"model":"google/gemini-3.8-flash"},
+       "learn":{"strong":"google/gemini-3.8-flash","cheap":"google/gemini-3.6-flash","vision":"google/gemini-2.5-flash"}}'
+```
 
 ## How a figure job runs
 

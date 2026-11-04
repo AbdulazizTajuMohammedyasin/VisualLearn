@@ -7,6 +7,7 @@ import { ChatEngine, chatRoutes } from "./chat.ts";
 import type { Config } from "./config.ts";
 import type { Db } from "./db.ts";
 import { documentRoutes, Documents } from "./documents.ts";
+import { learnRoutes, type LearnPool } from "./learn.ts";
 import { ApiError } from "./errors.ts";
 import { figureRoutes, pageRoutes, type Figures } from "./figures.ts";
 import { syncRoutes } from "./sync.ts";
@@ -21,6 +22,7 @@ export function deleteUser(deps: Deps, userId: string) {
   deps.figures?.deleteForUser(userId);
   deps.db.prepare("DELETE FROM users WHERE id = ?").run(userId);
   deps.documents?.sweep();
+  void deps.learn?.forget(userId).catch((e) => deps.log(`deleting lessons for ${userId}: ${(e as Error).message}`));
 }
 
 export interface Deps {
@@ -35,6 +37,8 @@ export interface Deps {
   figures: Figures | null;
   /** Attached PDFs; buildApp creates them under the data folder when not given. */
   documents?: Documents;
+  /** Each learner's LearnHarness process; absent when lessons are off (no VL_HARNESS_DIR). */
+  learn?: LearnPool;
   /** The model's instructions, including the OpenUI component library (ui-library/dist/system-prompt.md). */
   chatSystemPrompt: string;
   /** The OpenUI library version programs are written for. */
@@ -61,7 +65,10 @@ export async function buildApp(deps: Deps, options: { logger?: boolean; env?: No
   // The spec keeps finished replies' events for at least 10 minutes; a day is generous.
   const prune = setInterval(() => chat.pruneEvents(24 * 60 * 60 * 1000), 60 * 60 * 1000);
   prune.unref();
-  app.addHook("onClose", async () => clearInterval(prune));
+  app.addHook("onClose", async () => {
+    clearInterval(prune);
+    await deps.learn?.close();
+  });
   const limits = rateLimits(deps.now, options.env);
 
   app.setErrorHandler((error, request, reply) => {
@@ -123,6 +130,7 @@ export async function buildApp(deps: Deps, options: { logger?: boolean; env?: No
 
         chatRoutes(authed, deps, chat);
         documentRoutes(authed, deps, documents);
+        if (deps.learn) learnRoutes(authed, deps, deps.learn, limits.work);
         if (deps.figures) figureRoutes(authed, deps, deps.figures);
         syncRoutes(authed, deps, deps.figures);
         authed.register(async (admin) => adminRoutes(admin, deps, chat));

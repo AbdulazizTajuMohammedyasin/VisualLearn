@@ -9,6 +9,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Figures } from "../src/figures.ts";
+import { LearnPool, type LearnPoolOptions } from "../src/learn.ts";
 import type { Previewer } from "../src/previews.ts";
 import { DevRunner, type FigureRunner } from "../src/runners.ts";
 
@@ -24,7 +25,7 @@ export interface TestServer {
 export async function testServer(
   env: Record<string, string> = {},
   google: GoogleVerifier | null = null,
-  figures: { workers?: number; runner?: FigureRunner; previewer?: Previewer } = {},
+  figures: { workers?: number; runner?: FigureRunner; previewer?: Previewer; learn?: Omit<LearnPoolOptions, "dir"> } = {},
 ): Promise<TestServer> {
   const clock = { now: Date.parse("2026-11-01T12:00:00Z") };
   const mail = new Map<string, string>();
@@ -48,6 +49,7 @@ export async function testServer(
     pagesDir: mkdtempSync(join(tmpdir(), "vl-pages-")),
     previewer: figures.previewer,
   });
+  if (figures.learn) deps.learn = new LearnPool(deps, { dir: mkdtempSync(join(tmpdir(), "vl-learn-")), ...figures.learn });
   const app = await buildApp(deps, { env: { VL_RATE_AUTH_PER_MIN: "1000", ...env } });
   return { app, deps, clock, mail };
 }

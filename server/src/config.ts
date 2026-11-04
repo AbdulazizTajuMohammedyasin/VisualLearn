@@ -33,6 +33,13 @@ export interface Config {
   chromeBin: string;
   /** Containers usually can't give Chrome its sandbox; the page still gets no network. */
   chromeNoSandbox: boolean;
+  /** LearnHarness checkout (harness/); empty turns lessons off. */
+  harnessDir: string;
+  /** `next dev` instead of the standalone build: one learner at a time, for development. */
+  harnessDev: boolean;
+  /** Learners whose LearnHarness process may run at once. */
+  learnMaxInstances: number;
+  learnIdleMs: number;
   /** SMTP server for sign-in codes, e.g. smtps://user:pass@smtp.example.com:465; empty logs codes instead. */
   smtpUrl: string;
   mailFrom: string;
@@ -62,6 +69,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     devFigureStageMs: Number(env.VL_DEV_FIGURE_STAGE_MS ?? 4000),
     chromeBin: env.VL_CHROME_BIN ?? env.CHROME_PATH ?? "",
     chromeNoSandbox: env.VL_CHROME_NO_SANDBOX === "1",
+    harnessDir: env.VL_HARNESS_DIR ?? "",
+    harnessDev: env.VL_HARNESS_DEV === "1",
+    learnMaxInstances: Math.max(1, Number(env.VL_LEARN_MAX_INSTANCES ?? 20)),
+    learnIdleMs: Number(env.VL_LEARN_IDLE_MIN ?? 15) * 60_000,
     smtpUrl: env.VL_SMTP_URL ?? "",
     mailFrom: env.VL_MAIL_FROM ?? "VisualLearn <no-reply@visuallearn.app>",
   };

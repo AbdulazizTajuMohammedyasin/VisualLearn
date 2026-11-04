@@ -24,6 +24,9 @@ export interface Route {
 export interface Routing {
   chat: Route;
   figures: Route;
+  /** LearnHarness's model slots, as `provider/model` ids: lessons and probing,
+   *  background work, and image reading. Absent until the admin sets them. */
+  learn?: { strong: string; cheap: string; vision: string } | null;
 }
 
 export const SUPPORTED_NPM = ["@ai-sdk/anthropic", "@ai-sdk/openai", "@ai-sdk/google", "@ai-sdk/openai-compatible"] as const;

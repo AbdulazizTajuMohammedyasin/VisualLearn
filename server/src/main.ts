@@ -5,6 +5,7 @@ import { consoleMailer, googleVerifier } from "./auth.ts";
 import { loadConfig } from "./config.ts";
 import { openDb } from "./db.ts";
 import { Figures } from "./figures.ts";
+import { harnessLauncher, LearnPool } from "./learn.ts";
 import { smtpMailer } from "./mail.ts";
 import { ModelRegistry } from "./models.ts";
 import { ChromePreviewer } from "./previews.ts";
@@ -41,6 +42,16 @@ deps.figures = new Figures(deps, {
   pagesDir: join(config.dataDir, "pages"),
   previewer: config.chromeBin ? new ChromePreviewer({ bin: config.chromeBin, noSandbox: config.chromeNoSandbox }) : undefined,
 });
+// Lessons: each learner's own LearnHarness process (see learn.ts).
+if (config.harnessDir) {
+  deps.learn = new LearnPool(deps, {
+    launcher: harnessLauncher({ harnessDir: config.harnessDir, dev: config.harnessDev, chromePath: config.chromeBin, readyTimeoutMs: config.harnessDev ? 180_000 : 60_000, log: (m) => log(m) }),
+    dir: join(config.dataDir, "learn"),
+    // `next dev` can't run twice in one folder.
+    maxInstances: config.harnessDev ? 1 : config.learnMaxInstances,
+    idleMs: config.learnIdleMs,
+  });
+}
 const app = await buildApp(deps, { logger: true });
 log = (m) => app.log.info(m);
 if (!config.smtpUrl && !config.devAuth) app.log.warn("VL_SMTP_URL isn't set: sign-in codes are only written to this log, so email sign-in won't work for users.");

@@ -4,6 +4,7 @@ import { publicUser, type UserRow } from "./auth.ts";
 import { deleteConversation, summaryJson, type ChatEngine } from "./chat.ts";
 import { badRequest, conflict, forbidden, notFound } from "./errors.ts";
 import type { FigureRow } from "./figures.ts";
+import { LEARN_PROVIDERS, LEARN_SLOTS } from "./learn.ts";
 import { SUPPORTED_NPM, type Provider, type Route, type Routing } from "./models.ts";
 import { iso } from "./util.ts";
 
@@ -52,13 +53,31 @@ export function adminRoutes(app: FastifyInstance, deps: Deps, chat: ChatEngine) 
   app.delete("/admin/providers/:id", async (request, reply) => {
     const id = (request.params as { id: string }).id;
     const routing = models.routing();
-    const used = [routing.chat, routing.figures].some((r) => [r.model, r.fallback].some((m) => m?.startsWith(`${id}/`)));
+    const used = [routing.chat.model, routing.chat.fallback, routing.figures.model, routing.figures.fallback, ...Object.values(routing.learn ?? {})]
+      .some((m) => m?.startsWith(`${id}/`));
     if (used) throw conflict("Routing still uses this provider. Change the routing first.");
     models.deleteProvider(id);
     return reply.code(204).send();
   });
 
   app.get("/admin/routing", async () => models.routing());
+
+  /** Lesson slots: `provider/model` ids on providers LearnHarness can reach directly. */
+  const checkLearn = (learn: Routing["learn"] | undefined): Routing["learn"] => {
+    if (!learn) return null;
+    const slots = {} as NonNullable<Routing["learn"]>;
+    for (const slot of LEARN_SLOTS) {
+      const ref = (learn as Record<string, unknown>)[slot];
+      if (typeof ref !== "string" || !ref.includes("/")) throw badRequest(`learn.${slot} must be a provider/model id.`);
+      const [providerId, ...rest] = ref.split("/");
+      const p = models.provider(providerId);
+      if (!p) throw badRequest(`learn.${slot}: no provider called ${providerId}.`);
+      if (!p.models.includes(rest.join("/"))) throw badRequest(`learn.${slot}: ${providerId} doesn't list the model ${rest.join("/")}.`);
+      if (!LEARN_PROVIDERS[p.npm]) throw badRequest(`learn.${slot}: lessons can use ${Object.keys(LEARN_PROVIDERS).join(", ")} providers for now.`);
+      slots[slot] = ref;
+    }
+    return slots;
+  };
 
   app.put("/admin/routing", async (request) => {
     const body = (request.body ?? {}) as Partial<Routing>;
@@ -74,8 +93,10 @@ export function adminRoutes(app: FastifyInstance, deps: Deps, chat: ChatEngine) 
       }
       return { model: route.model, fallback };
     };
-    const routing: Routing = { chat: check("chat", body.chat), figures: check("figures", body.figures) };
+    const routing: Routing = { chat: check("chat", body.chat), figures: check("figures", body.figures), learn: checkLearn(body.learn) };
     models.saveRouting(routing);
+    // Learners' LearnHarness processes read their models at start: restart them.
+    deps.learn?.reconfigure();
     return routing;
   });
 
@@ -151,6 +172,7 @@ export function adminRoutes(app: FastifyInstance, deps: Deps, chat: ChatEngine) 
   app.get("/admin/capacity", async () => ({
     figures: deps.figures?.capacity() ?? null,
     chat: { activeReplies: chat.activeCount() },
+    lessons: deps.learn?.stats() ?? null,
     routing: models.routing(),
   }));
 }

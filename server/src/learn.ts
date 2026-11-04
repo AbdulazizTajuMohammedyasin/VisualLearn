@@ -1,0 +1,411 @@
+import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import { createServer } from "node:net";
+import { join } from "node:path";
+import type { FastifyInstance } from "fastify";
+import type { Deps } from "./app.ts";
+import { ApiError, forbidden } from "./errors.ts";
+import type { ModelRegistry } from "./models.ts";
+import type { RateLimiter } from "./ratelimit.ts";
+
+/**
+ * Lessons run on LearnHarness (harness/), which is built for one person per
+ * server process: it binds its data folder, keys and settings when it starts.
+ * So each learner gets a private LearnHarness process, started on demand and
+ * stopped when idle. This server signs learners in, picks the models, and
+ * forwards only the API routes a learner should reach.
+ */
+
+/** A running LearnHarness process for one learner, reachable on 127.0.0.1:[port]. */
+export interface LearnInstance {
+  port: number;
+  /** LearnHarness's per-launch capability: every request must carry it. */
+  secret: string;
+  stop(): Promise<void>;
+  /** Settles when the process ends for any reason. */
+  exited: Promise<void>;
+}
+
+export interface LearnDirs {
+  root: string;
+  /** LH_DATA_DIR: lessons, plan, knowledge graph, settings. */
+  data: string;
+  /** LH_AUTH_FILE: stays empty; keys come in the environment. */
+  auth: string;
+  /** LH_FILES_ROOT: the only folder its file tools may read. */
+  files: string;
+  /** HOME for the process, so nothing writes into the server's own home. */
+  home: string;
+}
+
+export interface LearnLaunch {
+  userId: string;
+  dirs: LearnDirs;
+  /** Provider keys and paths for this learner's process. */
+  env: Record<string, string>;
+}
+
+export type LearnLauncher = (launch: LearnLaunch) => Promise<LearnInstance>;
+
+/** How LearnHarness names a provider and the variable its key rides in, per provider package. */
+export const LEARN_PROVIDERS: Record<string, { pi: string; envVar: string }> = {
+  "@ai-sdk/google": { pi: "google", envVar: "GEMINI_API_KEY" },
+  "@ai-sdk/anthropic": { pi: "anthropic", envVar: "ANTHROPIC_API_KEY" },
+  "@ai-sdk/openai": { pi: "openai", envVar: "OPENAI_API_KEY" },
+};
+
+export const LEARN_SLOTS = ["strong", "cheap", "vision"] as const;
+export type LearnSlot = (typeof LEARN_SLOTS)[number];
+
+/** The admin's lesson models as LearnHarness settings, plus the keys they need. */
+export function learnModels(models: ModelRegistry): { settings: Record<LearnSlot, { model: { provider: string; id: string } }> | null; env: Record<string, string> } {
+  const slots = models.routing().learn;
+  if (!slots) return { settings: null, env: {} };
+  const settings = {} as Record<LearnSlot, { model: { provider: string; id: string } }>;
+  const env: Record<string, string> = {};
+  for (const slot of LEARN_SLOTS) {
+    const ref = slots[slot];
+    const slash = ref.indexOf("/");
+    const provider = models.provider(ref.slice(0, slash));
+    const mapping = provider && LEARN_PROVIDERS[provider.npm];
+    if (!provider || !mapping) throw new Error(`Lesson slot ${slot} uses ${ref}, which LearnHarness can't reach`);
+    settings[slot] = { model: { provider: mapping.pi, id: ref.slice(slash + 1) } };
+    if (provider.apiKey) env[mapping.envVar] = provider.apiKey;
+  }
+  return { settings, env };
+}
+
+interface Entry {
+  instance: LearnInstance;
+  active: number;
+  lastUsed: number;
+  /** The admin changed the models: restart once nothing is using it. */
+  stale: boolean;
+}
+
+export interface LearnPoolOptions {
+  launcher: LearnLauncher;
+  /** Each learner's folders live under [dir]/<user id>. */
+  dir: string;
+  maxInstances: number;
+  idleMs: number;
+}
+
+/** One LearnHarness process per learner who is using lessons right now. */
+export class LearnPool {
+  private readonly deps: Deps;
+  private readonly options: LearnPoolOptions;
+  private readonly running = new Map<string, Entry>();
+  private readonly starting = new Map<string, Promise<Entry>>();
+  private readonly sweep: NodeJS.Timeout;
+
+  constructor(deps: Deps, options: LearnPoolOptions) {
+    this.deps = deps;
+    this.options = options;
+    mkdirSync(options.dir, { recursive: true });
+    this.sweep = setInterval(() => void this.stopIdle(), Math.min(60_000, options.idleMs));
+    this.sweep.unref();
+  }
+
+  /** The learner's process, started if needed; call release() when the request is over. */
+  async acquire(userId: string): Promise<{ instance: LearnInstance; release: () => void }> {
+    let entry = this.running.get(userId);
+    if (!entry) {
+      let pending = this.starting.get(userId);
+      if (!pending) {
+        await this.makeRoom();
+        pending = this.start(userId).finally(() => this.starting.delete(userId));
+        this.starting.set(userId, pending);
+      }
+      entry = await pending;
+    }
+    entry.active++;
+    entry.lastUsed = this.deps.now();
+    let released = false;
+    const held = entry;
+    return {
+      instance: entry.instance,
+      release: () => {
+        if (released) return;
+        released = true;
+        held.active--;
+        held.lastUsed = this.deps.now();
+        if (held.stale && held.active === 0) void this.stop(userId, held);
+      },
+    };
+  }
+
+  /** The admin changed the lesson models: every process restarts with them, idle ones now. */
+  reconfigure() {
+    for (const [userId, entry] of this.running) {
+      entry.stale = true;
+      if (entry.active === 0) void this.stop(userId, entry);
+    }
+  }
+
+  /** Stops the learner's process and deletes their lessons, graph and files. */
+  async forget(userId: string) {
+    await this.starting.get(userId)?.catch(() => {});
+    const entry = this.running.get(userId);
+    if (entry) await this.stop(userId, entry);
+    rmSync(this.dirs(userId).root, { recursive: true, force: true });
+  }
+
+  /** Stops every process (server shutdown). */
+  async close() {
+    clearInterval(this.sweep);
+    await Promise.all([...this.running].map(([userId, entry]) => this.stop(userId, entry)));
+  }
+
+  stats() {
+    return {
+      running: this.running.size,
+      starting: this.starting.size,
+      active: [...this.running.values()].reduce((n, e) => n + e.active, 0),
+      maxInstances: this.options.maxInstances,
+    };
+  }
+
+  dirs(userId: string): LearnDirs {
+    if (!/^[A-Za-z0-9_-]+$/.test(userId)) throw new Error("Unexpected user id");
+    const root = join(this.options.dir, userId);
+    return { root, data: join(root, "data"), auth: join(root, "auth.json"), files: join(root, "files"), home: join(root, "home") };
+  }
+
+  private async start(userId: string): Promise<Entry> {
+    const dirs = this.dirs(userId);
+    for (const d of [dirs.data, dirs.files, dirs.home]) mkdirSync(d, { recursive: true });
+    if (!existsSync(dirs.auth)) writeFileSync(dirs.auth, "{}\n", { mode: 0o600 });
+    const { settings, env } = learnModels(this.deps.models);
+    writeSettings(join(dirs.data, "settings.json"), settings);
+    const instance = await this.options.launcher({
+      userId,
+      dirs,
+      env: { ...env, LH_DATA_DIR: dirs.data, LH_AUTH_FILE: dirs.auth, LH_FILES_ROOT: dirs.files, HOME: dirs.home, USERPROFILE: dirs.home },
+    });
+    const entry: Entry = { instance, active: 0, lastUsed: this.deps.now(), stale: false };
+    this.running.set(userId, entry);
+    void instance.exited.then(() => {
+      if (this.running.get(userId) === entry) this.running.delete(userId);
+    });
+    return entry;
+  }
+
+  private async stop(userId: string, entry: Entry) {
+    if (this.running.get(userId) === entry) this.running.delete(userId);
+    await entry.instance.stop().catch((e) => this.deps.log(`stopping lessons for ${userId}: ${(e as Error).message}`));
+  }
+
+  private async stopIdle() {
+    const cutoff = this.deps.now() - this.options.idleMs;
+    for (const [userId, entry] of this.running) {
+      if (entry.active === 0 && entry.lastUsed <= cutoff) await this.stop(userId, entry);
+    }
+  }
+
+  /** At capacity, the longest-idle process makes way; if all are busy, the learner waits. */
+  private async makeRoom() {
+    if (this.running.size + this.starting.size < this.options.maxInstances) return;
+    const idle = [...this.running].filter(([, e]) => e.active === 0).sort((a, b) => a[1].lastUsed - b[1].lastUsed)[0];
+    if (!idle) {
+      throw new ApiError(503, "lessons_busy", "Lessons are at capacity right now. Try again in a minute.", { retryable: true, headers: { "Retry-After": "30" } });
+    }
+    await this.stop(idle[0], idle[1]);
+  }
+}
+
+/** Keeps the learner's own settings and sets the models to the admin's choice. */
+function writeSettings(file: string, models: object | null) {
+  let current: Record<string, unknown> = {};
+  try {
+    current = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  } catch {
+    // First start, or unreadable: start fresh.
+  }
+  if (models) current.models = models;
+  else delete current.models;
+  writeFileSync(file, JSON.stringify(current, null, 2));
+}
+
+// --- launching the real thing ---
+
+/** Variables a Node process needs from the host; nothing else of this server's environment is passed on. */
+const HOST_ENV = ["PATH", "Path", "SystemRoot", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "TZ"];
+
+/** The environment a learner's process starts with: host basics, its own paths and keys, and the launch secret. */
+export function learnEnv(launch: LearnLaunch, extra: { port: number; secret: string; chromePath: string; dev: boolean }): Record<string, string> {
+  const env: Record<string, string> = {};
+  for (const name of HOST_ENV) if (process.env[name] !== undefined) env[name] = process.env[name]!;
+  return {
+    ...env,
+    ...launch.env,
+    ...(extra.chromePath ? { CHROME_PATH: extra.chromePath } : {}),
+    LH_DESKTOP_SERVER: "1",
+    LH_DESKTOP_API_SECRET: extra.secret,
+    PORT: String(extra.port),
+    HOSTNAME: "127.0.0.1",
+    NODE_ENV: extra.dev ? "development" : "production",
+    NEXT_TELEMETRY_DISABLED: "1",
+  };
+}
+
+/**
+ * Starts LearnHarness's standalone build (`next build` + `node scripts/build-server.mjs`
+ * in harness/), or `next dev` for a single learner while developing.
+ */
+export function harnessLauncher(options: { harnessDir: string; dev: boolean; chromePath: string; readyTimeoutMs: number; log: (m: string) => void }): LearnLauncher {
+  return async (launch) => {
+    const port = await freePort();
+    const secret = randomBytes(32).toString("hex");
+    const standalone = join(options.harnessDir, ".next", "standalone");
+    const [cwd, args] = options.dev
+      ? [options.harnessDir, [join(options.harnessDir, "node_modules", "next", "dist", "bin", "next"), "dev", "-p", String(port), "-H", "127.0.0.1"]]
+      : [standalone, [join(standalone, "server.js")]];
+    if (!options.dev && !existsSync(args[0])) throw new Error(`No LearnHarness build at ${args[0]}; run next build and scripts/build-server.mjs in harness/`);
+    const child = spawn(process.execPath, args, {
+      cwd,
+      env: learnEnv(launch, { port, secret, chromePath: options.chromePath, dev: options.dev }),
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    let tail = "";
+    const keep = (chunk: Buffer) => (tail = (tail + chunk.toString()).slice(-2000));
+    child.stdout.on("data", keep);
+    child.stderr.on("data", keep);
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const stop = async () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      child.kill("SIGTERM");
+      const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+      await exited;
+      clearTimeout(timer);
+    };
+    try {
+      await waitReady(port, secret, exited, options.readyTimeoutMs);
+    } catch (e) {
+      await stop();
+      options.log(`lessons for ${launch.userId} didn't start: ${tail.trim().slice(-500)}`);
+      throw e;
+    }
+    return { port, secret, stop, exited };
+  };
+}
+
+function freePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      const { port } = server.address() as { port: number };
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/** Polls a cheap read route until the process answers it. */
+async function waitReady(port: number, secret: string, exited: Promise<void>, timeoutMs: number) {
+  let gone = false;
+  void exited.then(() => (gone = true));
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    if (gone) throw new Error("LearnHarness exited while starting");
+    const ok = await new Promise<boolean>((resolve) => {
+      const req = http.get({ host: "127.0.0.1", port, path: "/api/chats", headers: { "x-learnharness-desktop": secret }, timeout: 5000 }, (res) => {
+        res.resume();
+        resolve(res.statusCode === 200);
+      });
+      req.on("error", () => resolve(false));
+      req.on("timeout", () => req.destroy());
+    });
+    if (ok) return;
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  throw new Error("LearnHarness didn't start in time");
+}
+
+// --- the gateway ---
+
+/**
+ * The LearnHarness routes a learner may use: lessons, practice, the knowledge
+ * graph and their background work. Keys, providers, subscriptions, Claude Code,
+ * prompts and settings changes are the administrator's, so they are not forwarded.
+ */
+const ALLOWED: [RegExp, RegExp][] = [
+  [/^(GET|POST)$/, /^\/api\/chats$/],
+  [/^(GET|PATCH|DELETE)$/, /^\/api\/chats\/[\w-]+$/],
+  [/^GET$/, /^\/api\/chats\/[\w-]+\/(stream|markdown|artifact-ui|settings)$/],
+  [/^POST$/, /^\/api\/chats\/[\w-]+\/(dismiss|steer)$/],
+  [/^POST$/, /^\/api\/chat$/],
+  [/^GET$/, /^\/api\/(events|jobs|activity|search|models|settings)$/],
+  [/^POST$/, /^\/api\/activity\/abort$/],
+  [/^GET$/, /^\/api\/graph(\/(costs|status|sources|render-settings))?$/],
+  [/^(GET|DELETE)$/, /^\/api\/graph\/nodes\/[\w-]+$/],
+  [/^(PUT|POST)$/, /^\/api\/graph\/positions$/],
+  [/^POST$/, /^\/api\/graph\/(import|coverage\/extract)$/],
+  [/^(DELETE|PATCH|POST)$/, /^\/api\/graph\/sources$/],
+];
+
+export function learnAllowed(method: string, path: string): boolean {
+  return ALLOWED.some(([m, p]) => m.test(method) && p.test(path));
+}
+
+/** New lessons, answers and imports use models: they count against the work limit. */
+const WORK = [/^\/api\/chat$/, /^\/api\/graph\/(import|coverage\/extract)$/];
+
+const HOP_BY_HOP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "te", "trailer", "proxy-authorization", "proxy-authenticate", "host", "authorization", "cookie", "content-length"]);
+
+/** `/v1/learn/api/...` → the learner's own LearnHarness `/api/...`. */
+export function learnRoutes(app: FastifyInstance, deps: Deps, pool: LearnPool, work: RateLimiter) {
+  app.register(async (scope) => {
+    // Bodies pass through untouched: JSON, multipart note imports, anything.
+    scope.removeAllContentTypeParsers();
+    scope.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: 27 * 1024 * 1024 }, (_request, body, done) => done(null, body));
+
+    scope.all("/learn/*", async (request, reply) => {
+      const url = new URL(request.url, "http://local");
+      const path = url.pathname.replace(/^\/v1\/learn/, "");
+      if (!learnAllowed(request.method, path)) throw forbidden();
+      if (request.method === "POST" && WORK.some((w) => w.test(path))) work.hit(request.user.id);
+
+      const { instance, release } = await pool.acquire(request.user.id);
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries(request.headers)) {
+        if (!HOP_BY_HOP.has(name) && typeof value === "string") headers[name] = value;
+      }
+      headers["x-learnharness-desktop"] = instance.secret;
+      const body = Buffer.isBuffer(request.body) ? request.body : null;
+      if (body) headers["content-length"] = String(body.length);
+
+      reply.hijack();
+      const res = reply.raw;
+      const upstream = http.request({ host: "127.0.0.1", port: instance.port, method: request.method, path: path + url.search, headers }, (answer) => {
+        const out: Record<string, string | string[]> = {};
+        for (const [name, value] of Object.entries(answer.headers)) {
+          if (value !== undefined && !HOP_BY_HOP.has(name)) out[name] = value;
+        }
+        // Event streams must reach the phone as they happen.
+        if (String(answer.headers["content-type"] ?? "").startsWith("text/event-stream")) out["x-accel-buffering"] = "no";
+        res.writeHead(answer.statusCode ?? 502, out);
+        answer.pipe(res);
+        answer.on("end", release);
+        answer.on("error", release);
+      });
+      upstream.on("error", (e) => {
+        release();
+        deps.log(`lesson request for ${request.user.id} failed: ${e.message}`);
+        if (!res.headersSent) {
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: { code: "lessons_unavailable", message: "Lessons are restarting. Try again in a moment.", retryable: true } }));
+        } else res.destroy();
+      });
+      // The phone went away: stop the upstream read (the lesson itself keeps running there).
+      res.on("close", () => {
+        if (!res.writableFinished) upstream.destroy();
+        release();
+      });
+      upstream.end(body ?? undefined);
+    });
+  });
+}
