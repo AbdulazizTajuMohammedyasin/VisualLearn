@@ -61,7 +61,7 @@ class VisualLearnApp : Application() {
         val store = OfflineStore(this)
         figures = FiguresRepository(this, api, store)
         chat = ChatRepository(api, figures, store)
-        lessons = (api as? LearnApi)?.let { LessonRepository(it, figures) }
+        lessons = (api as? LearnApi)?.let { LessonRepository(it, figures, store) }
         knowledge = (api as? LearnApi)?.let { KnowledgeRepository(it) }
         gallery = Gallery(this)
         connectivity = Connectivity(this)
@@ -83,7 +83,7 @@ class VisualLearnApp : Application() {
     private fun clearOnSignOut(store: OfflineStore) = scope.launch {
         tokens.signedIn.drop(1).filter { !it }.collect {
             chat.clear()
-            lessons?.close()
+            lessons?.clear()
             figures.clear()
             store.clear()
         }

@@ -172,6 +172,10 @@ data class PlanNode(val id: String, val title: String, val summary: String?)
 
 object LessonJson {
 
+    fun write(s: LessonSummary): JSONObject = JSONObject()
+        .put("id", s.id).put("title", s.title).put("updatedAt", s.updatedAt).put("kind", s.kind)
+        .put("phase", s.phase ?: "").put("pendingQuestion", s.pendingQuestion).put("busy", s.busy)
+
     fun summary(o: JSONObject) = LessonSummary(
         id = o.getString("id"),
         title = o.optString("title").ifBlank { "Untitled lesson" },

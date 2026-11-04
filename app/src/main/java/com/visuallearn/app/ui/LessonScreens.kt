@@ -296,26 +296,35 @@ fun LessonScreen(lessons: LessonRepository, figures: FiguresRepository, lessonId
                     }
                 }
             }
+            if (state.offline) {
+                Text(
+                    "You're offline. This is the lesson as it was when you last opened it.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                )
+            }
             state.error?.takeIf { lesson != null }?.let {
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
             }
             val pending = lesson?.pendingQuestion
             val exercise = lesson?.activeExercise
+            // Offline, the lesson reads but can't go on.
+            val canAct = !state.sending && !state.offline
             if (pending != null && !lesson.busy) {
-                QuestionDock(pending, sending = state.sending) { choice -> lessons.answer(pending, choice) }
+                QuestionDock(pending, sending = !canAct) { choice -> lessons.answer(pending, choice) }
             } else if (exercise != null) {
                 // Working a problem: what's typed is the learner's working, which the practitioner reads and answers.
-                LessonComposer(enabled = !lesson.busy && !state.sending, placeholder = "Your working or answer") { lessons.work(exercise, it) }
+                LessonComposer(enabled = !lesson.busy && canAct, placeholder = "Your working or answer") { lessons.work(exercise, it) }
             } else if (lesson != null) {
                 if (lesson.betweenProblems) {
                     Button(
                         onClick = lessons::nextProblem,
-                        enabled = !state.sending,
+                        enabled = canAct,
                         modifier = Modifier.padding(start = 16.dp, top = 6.dp),
                         contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
                     ) { Text("Next problem") }
                 }
-                LessonComposer(enabled = !lesson.busy && !state.sending, onSend = lessons::say)
+                LessonComposer(enabled = !lesson.busy && canAct, onSend = lessons::say)
             }
         }
     }

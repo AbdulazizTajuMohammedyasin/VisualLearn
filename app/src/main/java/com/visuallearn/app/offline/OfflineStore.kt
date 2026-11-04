@@ -22,6 +22,8 @@ class OfflineStore(private val dir: File) {
     private val summariesFile = File(dir, "conversations.json")
     private val figuresFile = File(dir, "figures.json")
     private val cursorFile = File(dir, "sync-cursor")
+    private val lessonsDir = File(dir, "lessons")
+    private val lessonListFile = File(dir, "lessons.json")
 
     @Synchronized
     fun summaries(): List<ConversationSummary> =
@@ -64,12 +66,32 @@ class OfflineStore(private val dir: File) {
             if (value == null) cursorFile.delete() else write(cursorFile, value)
         }
 
+    /** The lesson list and each lesson's record, as LearnHarness sent them, for reading lessons offline. */
+    @Synchronized
+    fun lessonList(): String? = read(lessonListFile)
+
+    @Synchronized
+    fun saveLessonList(json: String) = write(lessonListFile, json)
+
+    @Synchronized
+    fun lesson(id: String): String? = read(lessonFile(id))
+
+    @Synchronized
+    fun saveLesson(id: String, record: String) = write(lessonFile(id), record)
+
+    @Synchronized
+    fun deleteLesson(id: String) {
+        lessonFile(id).delete()
+    }
+
     @Synchronized
     fun clear() {
         dir.deleteRecursively()
     }
 
     private fun conversationFile(id: String) = File(conversationsDir, safe(id) + ".json")
+
+    private fun lessonFile(id: String) = File(lessonsDir, safe(id) + ".json")
 
     private fun uiStateFile(key: String) = File(File(dir, "ui-state"), safe(key) + ".json")
 

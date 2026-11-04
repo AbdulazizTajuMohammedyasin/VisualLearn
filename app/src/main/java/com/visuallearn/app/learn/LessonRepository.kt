@@ -5,6 +5,7 @@ import com.visuallearn.app.api.ApiException
 import com.visuallearn.app.chat.MAX_PDF_BYTES
 import com.visuallearn.app.chat.PdfAttachment
 import com.visuallearn.app.figures.FiguresRepository
+import com.visuallearn.app.offline.OfflineStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class LessonState(
@@ -28,6 +30,8 @@ data class LessonState(
     val error: String? = null,
     /** What the teacher's background work is doing, by the call that started it. */
     val activity: Map<String, JobProgress> = emptyMap(),
+    /** Showing the copy kept on the phone: the server couldn't be reached. */
+    val offline: Boolean = false,
 )
 
 /**
@@ -36,7 +40,7 @@ data class LessonState(
  * (a figure, a demo, research) is still going, because LearnHarness wakes the
  * teacher on its own when that work finishes.
  */
-class LessonRepository(private val api: LearnApi, private val figures: FiguresRepository) {
+class LessonRepository(private val api: LearnApi, private val figures: FiguresRepository, private val store: OfflineStore) {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val _lessons = MutableStateFlow<List<LessonSummary>>(emptyList())
@@ -49,9 +53,22 @@ class LessonRepository(private val api: LearnApi, private val figures: FiguresRe
     private var follow: Job? = null
     private var watch: Job? = null
 
-    fun refreshLessons() = scope.launch {
-        runCatching { api.lessons() }.onSuccess { _lessons.value = it }.onFailure { Log.w(TAG, "lessons", it) }
+    init {
+        scope.launch { if (_lessons.value.isEmpty()) _lessons.value = savedLessons() }
     }
+
+    fun refreshLessons() = scope.launch {
+        runCatching { api.lessons() }
+            .onSuccess { list ->
+                _lessons.value = list
+                store.saveLessonList(JSONArray(list.map(LessonJson::write)).toString())
+            }
+            .onFailure { Log.w(TAG, "lessons", it) }
+    }
+
+    private fun savedLessons(): List<LessonSummary> =
+        runCatching { store.lessonList()?.let { JSONArray(it) }?.let { a -> (0 until a.length()).map { LessonJson.summary(a.getJSONObject(it)) } } }
+            .getOrNull().orEmpty()
 
     /** Opens a lesson and keeps it current while it's open. */
     fun open(id: String) {
@@ -64,6 +81,12 @@ class LessonRepository(private val api: LearnApi, private val figures: FiguresRe
             if (record?.optBoolean("turnInFlight") == true) followTurn(id)
         }
         watch = scope.launch { watchBackgroundWork(id) }
+    }
+
+    /** Forgets the lesson list (sign-out); the files go with the offline store. */
+    fun clear() {
+        close()
+        _lessons.value = emptyList()
     }
 
     fun close() {
@@ -116,6 +139,7 @@ class LessonRepository(private val api: LearnApi, private val figures: FiguresRe
 
     fun delete(id: String) = scope.launch {
         runCatching { api.deleteLesson(id) }.onSuccess {
+            store.deleteLesson(id)
             if (openId == id) close()
             refreshLessons()
         }.onFailure { e -> _state.update { it.copy(error = e.userMessage()) } }
@@ -177,9 +201,18 @@ class LessonRepository(private val api: LearnApi, private val figures: FiguresRe
             .onSuccess { r ->
                 if (openId != id) return
                 record = r
+                _state.update { it.copy(offline = false) }
                 show(id, null)
+                withContext(Dispatchers.IO) { store.saveLesson(id, r.toString()) }
             }
-            .onFailure { e -> if (openId == id) _state.update { it.copy(loading = false, error = e.userMessage()) } }
+            .onFailure { e ->
+                if (openId != id) return
+                // Out of reach: the copy kept on the phone still reads, though the lesson can't go on.
+                val saved = if (record == null) store.lesson(id)?.let { runCatching { JSONObject(it) }.getOrNull() } else null
+                if (saved != null) record = saved
+                _state.update { it.copy(loading = false, offline = record != null, error = if (record != null) null else e.userMessage()) }
+                if (saved != null) show(id, null)
+            }
     }
 
     private fun show(id: String, live: JSONObject?) {
