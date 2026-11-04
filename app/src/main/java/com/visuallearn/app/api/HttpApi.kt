@@ -189,7 +189,8 @@ class HttpApi(
             .orEmpty()
 
     override suspend fun deleteLesson(id: String) {
-        call("DELETE", "/learn/api/chats/$id")
+        // What the lesson taught stays in the learner's knowledge graph.
+        call("DELETE", "/learn/api/chats/$id?mode=preserve-graph")
     }
 
     override suspend fun uploadLessonFile(name: String, pdf: ByteArray): String {
