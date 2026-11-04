@@ -1,8 +1,37 @@
 # VisualLearn server
 
-The API the Android app talks to, as specified in [docs/server-api.md](../docs/server-api.md): sign-in, streaming chat with interactive OpenUI parts, figure jobs on a fair-share queue, offline sync, and an admin API for model routing and content.
+The backend of [VisualLearn](../README.md). It handles sign-in, chat, lessons and 3D figure building for the Android app, and it can use cloud or self-hosted models. Its API is specified in [docs/server-api.md](../docs/server-api.md).
 
-Node 24 runs the TypeScript directly, so there is no build step. Data lives in SQLite (`node:sqlite`) and finished figure pages are files.
+## What it does
+
+| Area | How |
+|---|---|
+| **Accounts** | Email codes and Sign in with Google. HMAC-signed access tokens with refresh tokens. Account deletion removes everything. |
+| **Chat** | Replies stream over Server-Sent Events and resume after a dropped connection. Replies can contain Markdown, interactive OpenUI parts and figure jobs. PDFs are read natively by models that support it, and as text by the rest. |
+| **Lessons** | One [LearnHarness](https://github.com/amosblomqvist/learnharness) process per learner, started on demand behind `/v1/learn`. Each process gets its own data folder, file sandbox and per-launch secret. Idle processes are stopped, and the number running is capped. |
+| **3D figures** | A queue that is fair across users feeds isolated [OpenCode](https://opencode.ai) agents running the [Anatomy](https://github.com/wheresryan22/anatomy) skill. Progress streams live. Pages are stored by sha256, served through signed links, and given a preview image by headless Chromium. |
+| **Offline sync** | A cursor-based `/sync` sends the app every change and deletion since it last synced. |
+| **Models** | An admin API registers providers and routes chat, figures and each lesson role to a model: Anthropic, OpenAI, Google, or any OpenAI-compatible server. Keys are write-only and never written to disk. |
+| **Protection** | Rate limits per IP and per user, a cap on concurrent work, and an allow-list of the lesson routes learners may reach. |
+
+Node 24 runs the TypeScript directly, so there is no build step. Data lives in SQLite (`node:sqlite`), and finished figure pages are files.
+
+```
+src/
+  main.ts, app.ts, config.ts   startup, wiring, configuration
+  db.ts                        SQLite schema and migrations
+  auth.ts, mail.ts, admin.ts   accounts, sessions, sign-in emails, admin API
+  chat.ts, prompt.ts, fence.ts streaming chat, the system prompt, interactive parts in replies
+  sync.ts                      offline sync
+  ratelimit.ts, util.ts        abuse limits, helpers
+  documents.ts                 PDF uploads and reading
+  learn.ts                     LearnHarness process pool and /v1/learn gateway
+  figures.ts, runners.ts       figure queue and OpenCode workers
+  previews.ts                  headless Chromium previews
+  models.ts, errors.ts         provider registry, routing, error mapping
+scripts/check-models.ts        can a model run lessons?
+test/                          node:test suites (80 tests)
+```
 
 ## Run it locally
 
