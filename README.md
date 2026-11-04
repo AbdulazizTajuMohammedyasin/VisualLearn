@@ -112,6 +112,8 @@ The lesson engine in [harness/](harness/) is a fork of [LearnHarness](https://gi
 
 Figures are built with [Anatomy](https://github.com/wheresryan22/anatomy) (MIT). Gallery figures come from the Anatomy community and are credited to their authors. Third-party notices are in [app/src/main/assets/licenses.md](app/src/main/assets/licenses.md) and in the app under Settings → Open-source licences.
 
-## Author
+## Team
 
-Built by Abdulaziz Taju ([GitHub](https://github.com/AbdulazizTajuMohammedyasin)).
+- Abdulaziz Taju ([GitHub](https://github.com/AbdulazizTajuMohammedyasin))
+- Mohammedsaad
+- Usman Anyalo
