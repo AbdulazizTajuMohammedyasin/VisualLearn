@@ -12,7 +12,8 @@ import { newHandoffMessage } from "../native-messages.ts";
 
 // ─── Async sub-agent jobs (vision §2.5; plan.md Wave 0 protocol) ────────────
 
-export type JobKind = "research" | "demo" | "visual" | "pdf";
+/** `figure` (VisualLearn fork): a 3D Anatomy figure built by the hosting server. */
+export type JobKind = "research" | "demo" | "visual" | "pdf" | "figure";
 export type JobStatus = "running" | "done" | "error";
 
 export interface JobRecord {
@@ -252,6 +253,24 @@ export interface PdfResult {
 	pagesConsulted: number[];
 }
 
+/** A 3D interactive figure (VisualLearn fork): an Anatomy machine the learner
+ *  can turn and operate, built by the hosting server's figure service. */
+export interface FigureToolInput {
+	/** Short title for the figure card. */
+	title: string;
+	/** What the figure must show: the mechanism, its parts and what moves. */
+	brief: string;
+}
+
+export interface FigureResult {
+	/** The hosting server's figure id; the app opens the figure with it. Empty on failure. */
+	figureId: string;
+	title: string;
+	/** The figure's own description of what it shows. */
+	summary?: string;
+	notes?: string;
+}
+
 // ─── Sub-agent steer messages (THE ASYNC PROTOCOL §3–4) ─────────────────────
 //
 // Wave B (owner-approved 2026-09-26): steers are NATIVE record messages —
@@ -277,7 +296,7 @@ export interface SubagentResultMeta {
 /** The data-subagent-artifact part payload: what the UI renders. */
 export interface SubagentArtifactData {
 	kind: JobKind;
-	result: ResearchResult | DemoResult | VisualResult | PdfResult;
+	result: ResearchResult | DemoResult | VisualResult | PdfResult | FigureResult;
 	/** The learner's pinned UI state (invert switch) riding the record. */
 	ui?: { inverted?: boolean };
 }
@@ -285,7 +304,7 @@ export interface SubagentArtifactData {
 /** A result steer's marker details: the UI's meta + artifact in one
  *  payload (the projection splits it into metadata + data part). */
 export interface SteerDetails extends SubagentResultMeta {
-	result: ResearchResult | DemoResult | VisualResult | PdfResult;
+	result: ResearchResult | DemoResult | VisualResult | PdfResult | FigureResult;
 	/** LEARNER UI state pinned onto the artifact (owner, 2026-10-07): the
 	 *  invert switch's position, persisted so navigating away and back (or
 	 *  restarting) keeps it. A VIEW preference — never enters the teacher's
@@ -316,8 +335,9 @@ export type SteerMessage = LhMarkerMessage;
 /** Whether a result is the failure shape (html/svg empty, failure brief). */
 export function isSubagentFailure(
 	kind: JobKind,
-	result: ResearchResult | DemoResult | VisualResult | PdfResult,
+	result: ResearchResult | DemoResult | VisualResult | PdfResult | FigureResult,
 ): boolean {
+	if (kind === "figure") return !(result as FigureResult).figureId;
 	if (kind === "research") {
 		const r = result as ResearchResult;
 		return r.sources.length === 0 && /^Research failed:/i.test(r.brief);
@@ -335,7 +355,13 @@ export function isSubagentFailure(
 }
 
 /** The model-facing text of a steer: what the result IS, what to do with it. */
-function steerText(kind: JobKind, result: ResearchResult | DemoResult | VisualResult | PdfResult): string {
+function steerText(kind: JobKind, result: ResearchResult | DemoResult | VisualResult | PdfResult | FigureResult): string {
+	if (kind === "figure") {
+		const r = result as FigureResult;
+		if (!r.figureId)
+			return `The 3D figure "${r.title}" could not be built: ${r.notes ?? "unknown reason"}. Teach the mechanism in prose, a demo or a visual instead; re-call figure only if the learner asks.`;
+		return `The 3D figure "${r.title}" is built and shown in the lesson as a card the learner can open, turn and operate.${r.summary ? ` What it shows: ${r.summary}` : ""}\nTeach with it: tell the learner what to look at and what to try in it.`;
+	}
 	if (isSubagentFailure(kind, result)) {
 		if (kind === "research")
 			return `${(result as ResearchResult).brief}\n\nContinue with what you can establish and flag the uncertainty to the learner.`;
@@ -367,7 +393,7 @@ function steerText(kind: JobKind, result: ResearchResult | DemoResult | VisualRe
  */
 export function buildSubagentSteer(
 	job: Pick<JobRecord, "id" | "kind" | "toolCallId">,
-	result: ResearchResult | DemoResult | VisualResult | PdfResult,
+	result: ResearchResult | DemoResult | VisualResult | PdfResult | FigureResult,
 ): SteerMessage {
 	return {
 		id: `steer_${job.id}`,
@@ -412,6 +438,8 @@ function abortText(kind: JobKind): string {
 		return "The demo job was aborted by the learner — no demo is coming. Acknowledge it in one line and teach the topic in prose instead (a re-dispatch is fine if the learner wants it).";
 	if (kind === "pdf")
 		return "The PDF reading job was aborted by the learner — no brief is coming. Acknowledge it in one line and continue without it (a re-dispatch is fine if the learner wants it).";
+	if (kind === "figure")
+		return "The 3D figure was cancelled — no figure is coming. Acknowledge it in one line and teach without it (a re-dispatch is fine if the learner wants it).";
 	return "The figure job was aborted by the learner — no figure is coming. Acknowledge it in one line and teach without it (a re-dispatch is fine if the learner wants it).";
 }
 

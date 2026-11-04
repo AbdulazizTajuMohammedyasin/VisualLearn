@@ -16,6 +16,8 @@ LearnHarness is AGPL-3.0, so this folder and the VisualLearn server built on it 
 
 Every change made to this folder is listed here, newest first, so it can be compared with or merged into a newer upstream release.
 
+- **A `figure` job kind for 3D Anatomy figures**, offered to the teacher only when `VL_FIGURE_URL` and `VL_FIGURE_TOKEN` are set (the VisualLearn server sets them). The job asks that server to build the figure and follows its progress; the result carries the server's figure id, and the teacher is told to teach with it or fall back. Files: `src/core/contracts/jobs.ts` (kind, `FigureToolInput`/`FigureResult`, failure check, steer and abort text), `src/agent/tools/jobs.ts` (the tool), `src/agent/subagents/figure-client.ts` (new), `src/agent/subagents/runner.ts` (the runner), `src/agent/prompts/teacher/50-demos.md` (when to use it), and the icon and label tables in `components/activity-dock.tsx` and `components/artifacts/dispatch-card.tsx`. Test: `tests/figure-job.test.ts`.
+
 - **`LH_FILES_ROOT` confines the learner file tools** (`src/agent/tools/fs-shared.ts`, test `tests/files-root.test.ts`). When set, `ls`, `find`, `grep`, `read` and the PDF reader treat that folder as home and refuse absolute paths, `..` steps and symbolic links that lead outside it. When unset, behaviour is exactly upstream's. The VisualLearn server sets it to each learner's own folder.
 
 ## Status on this machine (2026-11-02)

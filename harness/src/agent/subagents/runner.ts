@@ -10,6 +10,8 @@ import {
 	type JobKind,
 	type JobRecord,
 	type JobUsage,
+	type FigureResult,
+	type FigureToolInput,
 	type PdfResult,
 	type PdfToolInput,
 	type ResearchResult,
@@ -27,6 +29,7 @@ import type { ModelRole } from "../../../config.ts";
 import { ROLE_SLOT, modelsNotConfigured, type ModelSlotName, type ProviderKeyMissing } from "../../core/settings.ts";
 import type { ChatStore, JobStore } from "../../core/ports.ts";
 import { runDemoBuilder } from "./demo-builder.ts";
+import { buildFigure } from "./figure-client.ts";
 import { runPdfReaderAgent } from "./pdf-reader.ts";
 import { runResearcherAgent } from "./researcher.ts";
 import { runVisualMaker } from "./visual-maker.ts";
@@ -62,7 +65,7 @@ export const visualModelOverride: { current?: PiEngine } = {};
 export const pdfModelOverride: { current?: PiEngine } = {};
 
 /** The dispatch-time tool input (from src/agent/tools/jobs.ts schemas). */
-type JobToolInput = ResearchToolInput | DemoToolInput | VisualToolInput | PdfToolInput;
+type JobToolInput = ResearchToolInput | DemoToolInput | VisualToolInput | PdfToolInput | FigureToolInput;
 
 export interface JobRunnerDeps {
 	chatStore: ChatStore;
@@ -123,6 +126,9 @@ const KIND_ROLE: Record<JobKind, ModelRole> = {
 	demo: "demoBuilder",
 	visual: "visualMaker",
 	pdf: "pdfReader",
+	// VisualLearn fork: the figure is built by the hosting server; no model runs here,
+	// the role only satisfies the engine check that every job passes.
+	figure: "demoBuilder",
 };
 
 export function createJobRunner(deps: JobRunnerDeps): JobRunner {
@@ -186,6 +192,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 		demo: (jobId, engine, input, loop) => runDemoJob(jobId, engine, input, loop),
 		visual: (jobId, engine, input, loop) => runVisualJob(jobId, engine, input, loop),
 		pdf: (jobId, engine, input, loop) => runPdfJob(jobId, engine, input, loop),
+		figure: (jobId, _engine, input, loop) => runFigureJob(jobId, input, loop),
 	};
 
 	async function runJob(jobId: string, input?: JobToolInput): Promise<void> {
@@ -219,8 +226,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 				| PdfToolInput
 				| undefined;
 			const pdf = resolved as PdfToolInput | undefined;
-			const failure: ResearchResult | DemoResult | VisualResult | PdfResult =
-				job.kind === "research"
+			const failure: ResearchResult | DemoResult | VisualResult | PdfResult | FigureResult =
+				job.kind === "figure"
+					? { figureId: "", title: typeof (resolved as DemoToolInput | undefined)?.title === "string" ? (resolved as DemoToolInput).title : "3D figure", notes: `FAILED: ${reason}` }
+					: job.kind === "research"
 					? { brief: `Research failed: ${reason}`, sources: [] }
 					: job.kind === "demo"
 						? {
@@ -300,7 +309,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 	 * Save the computation outcome and session delivery obligation together.
 	 * Worker liveness ends after cleanup, not after a lesson consumes the result.
 	 */
-	async function finishJob(jobId: string, result: ResearchResult | DemoResult | VisualResult | PdfResult): Promise<void> {
+	async function finishJob(jobId: string, result: ResearchResult | DemoResult | VisualResult | PdfResult | FigureResult): Promise<void> {
 		const job = jobStore.getJob(jobId);
 		if (!job) return;
 		// Aborted mid-run (abortJob flips the record before
@@ -400,6 +409,30 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 			await finishJob(jobId, { brief: `Research failed: ${reason}`, sources: [] });
 		} finally {
 			await fs.rm(pdfDir, { recursive: true, force: true });
+		}
+	}
+
+	// ─── figure (VisualLearn fork) ───────────────────────────────────────────
+
+	async function runFigureJob(jobId: string, passedInput: JobToolInput | undefined, loop: LoopContext): Promise<void> {
+		const ctx = jobContext(jobId);
+		if (!ctx) return;
+		const input = (passedInput ?? resolveInput(ctx.job, passedInput)) as FigureToolInput | undefined;
+		const title = typeof input?.title === "string" && input.title.trim() ? input.title : "3D figure";
+		const brief = typeof input?.brief === "string" ? input.brief : "";
+		try {
+			jobStore.updateJob(jobId, { activity: "asking for a 3D figure" });
+			const result = await buildFigure(
+				{ title, brief },
+				{ signal: loop.abortSignal, onActivity: (line) => stillRunning(jobId) && jobStore.updateJob(jobId, { activity: line }) },
+			);
+			if (!result.figureId && stillRunning(jobId)) jobStore.updateJob(jobId, { error: result.notes ?? "figure failed" });
+			await finishJob(jobId, result);
+		} catch (err) {
+			if (loop.abortSignal.aborted) return;
+			const reason = err instanceof Error ? err.message : String(err);
+			if (stillRunning(jobId)) jobStore.updateJob(jobId, { error: reason });
+			await finishJob(jobId, { figureId: "", title, notes: `FAILED: ${reason}` });
 		}
 	}
 

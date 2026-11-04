@@ -3,6 +3,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { serverExecute } from "../tool-execute.ts";
 import type { JobRecord } from "../../core/contracts.ts";
 import type { JobStore } from "../../core/ports.ts";
+import { figureServiceAvailable } from "../subagents/figure-client.ts";
 
 /**
  * Async sub-agent job tools (vision §2.5; W2/W6 kinds + the pi-model
@@ -22,7 +23,7 @@ export interface JobToolContext {
 	/** Fire the background runner for a fresh job — fire-and-forget. The
 	 *  input rides along because the spawn happens MID-STREAM, before
 	 *  onFinish persists the tool part — a transcript scan would race it. */
-	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput) => void;
+	spawn: (job: JobRecord, input: ResearchInput | DemoInput | VisualInput | PdfInput | FigureInput) => void;
 	/** Search-provider availability, retained for existing composition seams.
 	 *  Research dispatch does not depend on it: web_fetch is keyless and
 	 *  web_search reports a missing provider as a recoverable tool result. */
@@ -57,6 +58,15 @@ export const visualInputSchema = Type.Object({
 	}),
 });
 
+export const figureInputSchema = Type.Object({
+	title: Type.String({ description: "Short title for the figure card, e.g. 'Four-stroke engine: one cylinder'." }),
+	brief: Type.String({
+		description:
+			"Exactly what the 3D figure must show: the mechanism, every part by name, what moves and how the parts drive each other, " +
+			"and the real proportions or numbers from the lesson or the learner's document. The builder sees NOTHING else of the lesson.",
+	}),
+});
+
 export const pdfInputSchema = Type.Object({
 	path: Type.String({ description: "Path to the learner's PDF (relative or absolute), exactly as they gave it." }),
 	question: Type.String({
@@ -75,7 +85,7 @@ function dispatch(
 	kind: JobRecord["kind"],
 	toolCallId: string,
 	ack: string,
-	input: ResearchInput | DemoInput | VisualInput | PdfInput,
+	input: ResearchInput | DemoInput | VisualInput | PdfInput | FigureInput,
 ): string {
 	const existing = ctx.jobStore.findJobByToolCallId(ctx.chatId, toolCallId);
 	const job = existing ?? ctx.jobStore.createJob({ kind, chatId: ctx.chatId, toolCallId, input });
@@ -96,6 +106,11 @@ const PDF_ACK =
 	"This call is fire-and-forget: continue your turn and keep teaching — do not wait, poll, or mention waiting. " +
 	"The document brief arrives as a new message when ready; weave it into the lesson and cite its pages.";
 
+const FIGURE_ACK =
+	"This call is fire-and-forget: continue your turn and keep teaching — do not wait, poll, or mention waiting. " +
+	"A 3D figure takes 20 to 60 minutes; the learner sees its progress as a card and is notified when it's ready. " +
+	"It arrives as a new message when built; teach with it then.";
+
 const RESEARCH_DESCRIPTION =
 	"Dispatch a background web-research agent: fact verification, current data, or niche specifics you are not certain about. " +
 	"The call is ASYNC and fire-and-forget — it resolves immediately and your turn continues; the research brief arrives later " +
@@ -113,6 +128,12 @@ const VISUAL_DESCRIPTION =
 	"function plots, physical layouts. For flows/relations/taxonomies write mermaid inline instead. " +
 	"The call is ASYNC and fire-and-forget — it resolves immediately and your turn continues; the verified figure arrives later " +
 	"as a new message.";
+const FIGURE_DESCRIPTION =
+	"Dispatch the build of a 3D interactive figure: an isometric machine the learner can turn and operate (Anatomy). Use it for " +
+	"MECHANISMS and SPATIAL STRUCTURES that are far easier to understand by watching them move or turning them around: engines, " +
+	"locks, gears, valves, the heart, a molecule, a lever system. It is slow (20 to 60 minutes) and costly, so at most one or two " +
+	"per session and never for simple facts, flows or plots — use demo, visual or mermaid for those. " +
+	"The call is ASYNC and fire-and-forget — it resolves immediately and your turn continues; the figure arrives later as a new message.";
 const PDF_DESCRIPTION =
 	"Dispatch a background sub-agent that READS a learner-provided PDF on your behalf (triage, targeted extraction, visual page " +
 	"reading for equations and diagrams) and returns a brief with page citations. Use it when the learner gives you a PDF path " +
@@ -155,6 +176,20 @@ export function jobTools(ctx: JobToolContext): Record<string, AgentTool<any>> {
 				dispatch(ctx, "visual", toolCallId, VISUAL_ACK, input),
 			),
 		},
+		// VisualLearn fork: only when the hosting server provides a figure service.
+		...(figureServiceAvailable()
+			? {
+					figure: {
+						name: "figure",
+						label: "figure",
+						description: FIGURE_DESCRIPTION,
+						parameters: figureInputSchema,
+						execute: serverExecute("figure", figureInputSchema, (input, { toolCallId }) =>
+							dispatch(ctx, "figure", toolCallId, FIGURE_ACK, input),
+						),
+					} satisfies AgentTool<typeof figureInputSchema>,
+				}
+			: {}),
 		pdf: {
 			name: "pdf",
 			label: "pdf",
@@ -169,3 +204,4 @@ export type ResearchInput = Static<typeof researchInputSchema>;
 export type DemoInput = Static<typeof demoInputSchema>;
 export type VisualInput = Static<typeof visualInputSchema>;
 export type PdfInput = Static<typeof pdfInputSchema>;
+export type FigureInput = Static<typeof figureInputSchema>;
