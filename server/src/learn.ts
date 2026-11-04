@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import { createServer } from "node:net";
 import { join } from "node:path";
@@ -40,6 +40,8 @@ export interface LearnDirs {
   files: string;
   /** HOME for the process, so nothing writes into the server's own home. */
   home: string;
+  /** What the process printed since it last started: background failures, like a knowledge graph update, show up only here. */
+  log: string;
 }
 
 export interface LearnLaunch {
@@ -215,7 +217,7 @@ export class LearnPool {
   dirs(userId: string): LearnDirs {
     if (!/^[A-Za-z0-9_-]+$/.test(userId)) throw new Error("Unexpected user id");
     const root = join(this.options.dir, userId);
-    return { root, data: join(root, "data"), auth: join(root, "auth.json"), files: join(root, "files"), home: join(root, "home") };
+    return { root, data: join(root, "data"), auth: join(root, "auth.json"), files: join(root, "files"), home: join(root, "home"), log: join(root, "harness.log") };
   }
 
   private async start(userId: string): Promise<Entry> {
@@ -316,6 +318,9 @@ export function learnEnv(launch: LearnLaunch, extra: { port: number; secret: str
   };
 }
 
+/** A learner's process log stops growing here until the process restarts. */
+const MAX_LOG_BYTES = 5 * 1024 * 1024;
+
 /**
  * Starts LearnHarness's standalone build (`next build` + `node scripts/build-server.mjs`
  * in harness/), or `next dev` for a single learner while developing.
@@ -336,7 +341,15 @@ export function harnessLauncher(options: { harnessDir: string; dev: boolean; chr
       windowsHide: true,
     });
     let tail = "";
-    const keep = (chunk: Buffer) => (tail = (tail + chunk.toString()).slice(-2000));
+    mkdirSync(launch.dirs.root, { recursive: true });
+    const log = createWriteStream(launch.dirs.log, { flags: "w" });
+    let logged = 0;
+    const keep = (chunk: Buffer) => {
+      tail = (tail + chunk.toString()).slice(-2000);
+      if (logged < MAX_LOG_BYTES) log.write(chunk);
+      logged += chunk.length;
+    };
+    child.once("exit", () => log.end());
     child.stdout.on("data", keep);
     child.stderr.on("data", keep);
     const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));

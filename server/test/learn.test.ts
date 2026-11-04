@@ -219,7 +219,7 @@ test("a learner's process gets host basics, its own paths and keys, and none of 
   process.env.ANTHROPIC_API_KEY_FOR_TEST = "ambient";
   try {
     const env = learnEnv(
-      { userId: "u", dirs: { root: "/r", data: "/r/data", auth: "/r/auth.json", files: "/r/files", home: "/r/home" }, env: { GEMINI_API_KEY: "k", LH_DATA_DIR: "/r/data" } },
+      { userId: "u", dirs: { root: "/r", data: "/r/data", auth: "/r/auth.json", files: "/r/files", home: "/r/home", log: "/r/harness.log" }, env: { GEMINI_API_KEY: "k", LH_DATA_DIR: "/r/data" } },
       { port: 4100, secret: "s".repeat(64), chromePath: "/usr/bin/chromium", dev: false },
     );
     assert.equal(env.GEMINI_API_KEY, "k");
