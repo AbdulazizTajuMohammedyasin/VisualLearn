@@ -178,6 +178,6 @@ private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<S
         is Screen.Lesson -> app.lessons?.let {
             LessonScreen(it, app.figures, screen.id, onOpenFigure = { id -> push(Screen.Figure(id)) }, onBack = ::pop)
         } ?: pop()
-        Screen.Knowledge -> app.knowledge?.let { KnowledgeScreen(it, onOpenLesson = { id -> push(Screen.Lesson(id)) }, onBack = ::pop) } ?: pop()
+        Screen.Knowledge -> app.knowledge?.let { KnowledgeScreen(it, app.lessons, onOpenLesson = { id -> push(Screen.Lesson(id)) }, onBack = ::pop) } ?: pop()
     }
 }

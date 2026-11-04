@@ -121,6 +121,35 @@ class LessonJsonTest {
     }
 
     @Test
+    fun aPracticeProblemStaysOpenUntilConcludedAndHidesItsSolutionUntilThen() {
+        fun record(vararg messages: String) = json("""{"id":"p","kind":"practice","turnInFlight":false,"messages":[${messages.joinToString(",")}]}""")
+        val posed = """{"id":"a1","role":"assistant","content":[{"type":"toolCall","id":"call_p","name":"problem","arguments":{"statement":"Why a flywheel?","mode":"composition","modelSolution":"It carries the crank."}}]}"""
+        val working = """{"id":"t1","role":"custom","customType":"practice-thinking","content":"Thinking:\nIt stores energy.","details":{"problemCallId":"call_p","text":"It stores energy."}}"""
+        val concluded = """{"id":"a2","role":"assistant","content":[{"type":"toolCall","id":"call_c","name":"conclude","arguments":{"outcome":"solved","verdict":"Right: stored energy carries the other strokes.","rung":null,"missClass":null,"retest":false}}]}"""
+
+        val open = LessonJson.lesson(record(posed, working))
+        assertTrue(open.practice)
+        assertEquals("call_p", open.activeExercise!!.callId)
+        assertNull(open.activeExercise!!.conclusion)
+        assertEquals(LessonItem.Attempt("t1", "It stores energy."), open.items[1])
+        assertFalse(open.betweenProblems)
+
+        val done = LessonJson.lesson(record(posed, working, concluded))
+        assertNull(done.activeExercise)
+        assertTrue(done.betweenProblems)
+        val x = done.items[0] as LessonItem.Exercise
+        assertEquals(Conclusion("solved", "Right: stored energy carries the other strokes."), x.conclusion)
+        assertEquals("It carries the crank.", x.solution)
+        // The verdict comes after the learner's working, where the problem was concluded.
+        assertEquals(LessonItem.ExerciseResult("r-call_c", x.conclusion!!, "It carries the crank."), done.items[2])
+
+        val input = LessonInput.thinking("call_p", "It stores energy.")
+        assertEquals("thinking", input.getString("type"))
+        assertEquals("call_p", input.getString("problemCallId"))
+        assertEquals("next", LessonInput.next().getString("type"))
+    }
+
+    @Test
     fun aWrittenAnswerCarriesTheTextAndTheCommittedAnswer() {
         val explain = LessonJson.project(
             listOf(json("""{"role":"assistant","content":[{"type":"toolCall","id":"c","name":"recall","arguments":{"question":"Why a flywheel?","correctAnswer":"It carries the crank through the three unpowered strokes."}}]}""")),

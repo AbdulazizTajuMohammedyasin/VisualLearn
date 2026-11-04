@@ -29,11 +29,14 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -42,17 +45,36 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
+import com.visuallearn.app.api.ApiException
 import com.visuallearn.app.learn.KnowledgeIdea
 import com.visuallearn.app.learn.KnowledgeRepository
+import com.visuallearn.app.learn.KnowledgeTopic
+import com.visuallearn.app.learn.LessonRepository
 import com.visuallearn.app.learn.MathText
 import com.visuallearn.app.learn.NotesImport
 
 /** What the learner knows: every idea from their lessons and notes, by topic. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun KnowledgeScreen(knowledge: KnowledgeRepository, onOpenLesson: (String) -> Unit, onBack: () -> Unit) {
+fun KnowledgeScreen(knowledge: KnowledgeRepository, lessons: LessonRepository?, onOpenLesson: (String) -> Unit, onBack: () -> Unit) {
     val state by knowledge.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    // The topic a practice session is being started on, and why starting failed.
+    var practising by remember { mutableStateOf<String?>(null) }
+    var practiceError by remember { mutableStateOf<String?>(null) }
+    fun practise(topic: KnowledgeTopic) {
+        val l = lessons ?: return
+        practising = topic.id
+        practiceError = null
+        scope.launch {
+            runCatching { l.practise(topic.name ?: "what I know", topic.ideas) }
+                .onSuccess { onOpenLesson(it) }
+                .onFailure { practiceError = (it as? ApiException)?.error?.message ?: "Couldn't start practice. Check your connection." }
+            practising = null
+        }
+    }
     val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { knowledge.import(pdfAttachment(context, it)) }
     }
@@ -91,15 +113,19 @@ fun KnowledgeScreen(knowledge: KnowledgeRepository, onOpenLesson: (String) -> Un
                 state.importing?.let { ImportPlate(it, null, onDismiss = null) }
                 state.imported?.let { ImportPlate(it.name, it, onDismiss = knowledge::dismissImport) }
                 if (state.loading && k == null) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
-                state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp)) }
+                (state.error ?: practiceError)?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(top = 8.dp)) }
             }
             k?.topics?.forEach { topic ->
                 item(key = "topic-${topic.id}") {
-                    Text(
-                        topic.name ?: if (k.topics.size == 1) "Ideas" else "More ideas",
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 4.dp),
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, top = 16.dp, bottom = 4.dp)) {
+                        Text(topic.name ?: if (k.topics.size == 1) "Ideas" else "More ideas", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        // Problems on these ideas, posed one at a time, with hints when stuck.
+                        if (lessons != null) {
+                            TextButton(onClick = { practise(topic) }, enabled = practising == null) {
+                                Text(if (practising == topic.id) "Starting…" else "Practise")
+                            }
+                        }
+                    }
                 }
                 items(topic.ideas, key = { "${topic.id}-${it.id}" }) { idea -> IdeaCard(idea, onOpenLesson) }
             }

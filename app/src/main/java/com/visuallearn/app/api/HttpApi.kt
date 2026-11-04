@@ -12,6 +12,7 @@ import com.visuallearn.app.api.ApiJson.parseUser
 import com.visuallearn.app.auth.TokenStore
 import com.visuallearn.app.learn.JobProgress
 import com.visuallearn.app.learn.Knowledge
+import com.visuallearn.app.learn.KnowledgeIdea
 import com.visuallearn.app.learn.KnowledgeJson
 import com.visuallearn.app.learn.LearnApi
 import com.visuallearn.app.learn.LessonJson
@@ -175,8 +176,13 @@ class HttpApi(
     override suspend fun lessons(): List<LessonSummary> =
         call("GET", "/learn/api/chats").getJSONArray("chats").objects().map(LessonJson::summary)
 
-    override suspend fun createLesson(title: String, practice: Boolean): String {
+    override suspend fun createLesson(title: String, practice: Boolean, ideas: List<KnowledgeIdea>): String {
         val body = JSONObject().put("title", title).apply { if (practice) put("kind", "practice") }
+        // The practice session's material: the picked ideas as the learner saw them.
+        if (ideas.isNotEmpty()) {
+            val picks = JSONArray(ideas.map { JSONObject().put("id", it.id).put("name", it.name).put("statement", it.statement) })
+            body.put("graphContext", JSONObject().put("propositions", picks))
+        }
         return call("POST", "/learn/api/chats", body).getString("id")
     }
 

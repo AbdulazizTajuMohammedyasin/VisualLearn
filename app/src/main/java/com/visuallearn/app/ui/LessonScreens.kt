@@ -78,6 +78,7 @@ import com.visuallearn.app.chat.PdfAttachment
 import com.visuallearn.app.figure.FigureView
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.learn.AnswerChoice
+import com.visuallearn.app.learn.Conclusion
 import com.visuallearn.app.learn.JobProgress
 import com.visuallearn.app.learn.LessonItem
 import com.visuallearn.app.learn.LessonRepository
@@ -286,6 +287,9 @@ fun LessonScreen(lessons: LessonRepository, figures: FiguresRepository, lessonId
                                 is LessonItem.Demo -> ArtifactFrame(item.key, item.title.ifBlank { "Interactive demo" }) { item.html }
                                 is LessonItem.Visual -> ArtifactFrame(item.key, null) { "<!doctype html><meta name=viewport content='width=device-width'><body style='margin:0;background:#fff'>${item.svg}</body>" }
                                 is LessonItem.Problem -> ProblemLine(item.text, onRetry = lessons::retry)
+                                is LessonItem.Exercise -> ExerciseCard(item)
+                                is LessonItem.ExerciseResult -> ExerciseResultCard(item)
+                                is LessonItem.Attempt -> LearnerBubble(item.text, null, label = "Your working")
                             }
                         }
                         if (lesson.busy) item("thinking") { ThinkingLine() }
@@ -296,9 +300,21 @@ fun LessonScreen(lessons: LessonRepository, figures: FiguresRepository, lessonId
                 Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
             }
             val pending = lesson?.pendingQuestion
+            val exercise = lesson?.activeExercise
             if (pending != null && !lesson.busy) {
                 QuestionDock(pending, sending = state.sending) { choice -> lessons.answer(pending, choice) }
+            } else if (exercise != null) {
+                // Working a problem: what's typed is the learner's working, which the practitioner reads and answers.
+                LessonComposer(enabled = !lesson.busy && !state.sending, placeholder = "Your working or answer") { lessons.work(exercise, it) }
             } else if (lesson != null) {
+                if (lesson.betweenProblems) {
+                    Button(
+                        onClick = lessons::nextProblem,
+                        enabled = !state.sending,
+                        modifier = Modifier.padding(start = 16.dp, top = 6.dp),
+                        contentPadding = PaddingValues(horizontal = 22.dp, vertical = 12.dp),
+                    ) { Text("Next problem") }
+                }
                 LessonComposer(enabled = !lesson.busy && !state.sending, onSend = lessons::say)
             }
         }
@@ -323,8 +339,9 @@ fun LessonScreen(lessons: LessonRepository, figures: FiguresRepository, lessonId
 }
 
 @Composable
-private fun LearnerBubble(text: String, pdf: String?) {
+private fun LearnerBubble(text: String, pdf: String?, label: String? = null) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        label?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 8.dp)) }
         pdf?.let { DocumentChip(it, "PDF") }
         Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh, shape = RoundedCornerShape(22.dp), modifier = Modifier.widthIn(max = 320.dp)) {
             Text(text, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
@@ -402,6 +419,60 @@ private fun Verdict(text: String, color: Color) {
         Spacer(Modifier.width(6.dp))
         Text(text, style = MaterialTheme.typography.labelMedium)
     }
+}
+
+/** A practice problem, marked with how it ended once it has. */
+@Composable
+private fun ExerciseCard(x: LessonItem.Exercise) {
+    val c = x.conclusion
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        border = if (c == null) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    when (x.mode) {
+                        "discrimination" -> "Problem: tell them apart"
+                        "composition" -> "Problem: put it together"
+                        else -> "Problem: from memory"
+                    },
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f),
+                )
+                if (c == null) Verdict("Your turn", StatusColors.Waiting) else Outcome(c)
+            }
+            MarkdownText(MathText.plain(x.statement))
+        }
+    }
+}
+
+/** The verdict on the learner's working, and the solution the practitioner committed to before posing the problem. */
+@Composable
+private fun ExerciseResultCard(r: LessonItem.ExerciseResult) {
+    var showSolution by rememberSaveable(r.key) { mutableStateOf(false) }
+    Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Outcome(r.conclusion)
+            Text(MathText.plain(r.conclusion.verdict), style = MaterialTheme.typography.bodyMedium)
+            if (r.solution != null) {
+                TextButton(onClick = { showSolution = !showSolution }, contentPadding = PaddingValues(0.dp)) {
+                    Text(if (showSolution) "Hide the solution" else "Show the solution")
+                }
+                if (showSolution) MarkdownText(MathText.plain(r.solution))
+            }
+        }
+    }
+}
+
+@Composable
+private fun Outcome(c: Conclusion) = when (c.outcome) {
+    "solved" -> Verdict("Solved", StatusColors.Ready)
+    "solvedWithHints" -> Verdict("Solved with hints", StatusColors.Ready)
+    "movedOn" -> Verdict("Moved on", StatusColors.Waiting)
+    "dismissed" -> Verdict("Set aside", MaterialTheme.colorScheme.outline)
+    else -> Verdict("Not solved", StatusColors.Failed)
 }
 
 /** Background work in progress: research, a PDF being read, a demo or 3D figure being built. */
@@ -552,7 +623,7 @@ private fun DockField(value: String, onChange: (String) -> Unit, hint: String, m
 }
 
 @Composable
-private fun LessonComposer(enabled: Boolean, onSend: (String) -> Unit) {
+private fun LessonComposer(enabled: Boolean, placeholder: String = "Ask or tell the teacher something", onSend: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     Surface(color = MaterialTheme.colorScheme.background) {
         Surface(
@@ -565,7 +636,7 @@ private fun LessonComposer(enabled: Boolean, onSend: (String) -> Unit) {
                 TextField(
                     value = text,
                     onValueChange = { text = it },
-                    placeholder = { Text("Ask or tell the teacher something") },
+                    placeholder = { Text(placeholder) },
                     maxLines = 5,
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.Transparent,

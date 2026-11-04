@@ -115,6 +115,33 @@ sealed interface LessonItem {
 
     /** Something that went wrong in the lesson, in the teacher's or server's words. */
     data class Problem(override val key: String, val text: String) : LessonItem
+
+    /** A practice problem (harness/src/agent/tools/practice.ts): open until the practitioner concludes it. */
+    data class Exercise(
+        override val key: String,
+        val callId: String,
+        val statement: String,
+        /** recall, discrimination or composition. */
+        val mode: String,
+        /** Shown only once concluded: it was committed before the problem was posed. */
+        val solution: String?,
+        val conclusion: Conclusion?,
+    ) : LessonItem
+
+    /** The learner's working on a practice problem. */
+    data class Attempt(override val key: String, val text: String) : LessonItem
+
+    /** Where a practice problem was concluded: the verdict on the learner's working, then the solution. */
+    data class ExerciseResult(override val key: String, val conclusion: Conclusion, val solution: String?) : LessonItem
+}
+
+/** How a practice problem ended. */
+data class Conclusion(
+    /** solved, solvedWithHints, movedOn, surrendered or dismissed. */
+    val outcome: String,
+    val verdict: String,
+) {
+    val solved get() = outcome == "solved" || outcome == "solvedWithHints"
 }
 
 /** A lesson as the phone shows it. */
@@ -125,7 +152,17 @@ data class Lesson(
     val plan: List<PlanNode>,
     /** The teacher is working right now. */
     val busy: Boolean,
+    /** A practice session: problems to work rather than a taught lesson. */
+    val practice: Boolean = false,
 ) {
+    /** The practice problem being worked on, if any. */
+    val activeExercise: LessonItem.Exercise?
+        get() = items.lastOrNull { it is LessonItem.Exercise && it.conclusion == null } as LessonItem.Exercise?
+
+    /** Between practice problems: the learner says when to go on. */
+    val betweenProblems: Boolean
+        get() = practice && !busy && activeExercise == null && items.any { it is LessonItem.Exercise }
+
     /** The question waiting for the learner, if any: the lesson can't go on until it's answered. */
     val pendingQuestion: LessonItem.Question?
         get() = items.lastOrNull { it is LessonItem.Question && it.answer == null } as LessonItem.Question?
@@ -156,6 +193,7 @@ object LessonJson {
             items = project(all),
             plan = plan(record.optJSONObject("tree")),
             busy = record.optBoolean("turnInFlight") || live != null,
+            practice = record.optString("kind") == "practice",
         )
     }
 
@@ -180,6 +218,8 @@ object LessonJson {
         }
 
         val items = ArrayList<LessonItem>()
+        // Only one practice problem is open at a time; conclude closes it.
+        var open: Int? = null
         messages.forEachIndexed { i, m ->
             val id = m.optString("id").ifBlank { "m$i" }
             when (m.optString("role")) {
@@ -196,12 +236,31 @@ object LessonJson {
                                 val args = part.optJSONObject("arguments") ?: JSONObject()
                                 if (name in QUESTION_TOOLS) items += question(callId, name, args, results[callId])
                                 else if (name in JOB_TOOLS && callId !in delivered) items += working(callId, name, args)
+                                else if (name == "problem") {
+                                    open = items.size
+                                    items += LessonItem.Exercise("x-$callId", callId, args.optString("statement"), args.optString("mode"), args.optString("modelSolution").ifBlank { null }, null)
+                                } else if (name == "conclude") open?.let { at ->
+                                    val exercise = items[at] as LessonItem.Exercise
+                                    val conclusion = Conclusion(args.optString("outcome"), args.optString("verdict"))
+                                    items[at] = exercise.copy(conclusion = conclusion)
+                                    items += LessonItem.ExerciseResult("r-$callId", conclusion, exercise.solution)
+                                    open = null
+                                }
                             }
                         }
                     }
                     m.optString("errorMessage").takeIf { it.isNotBlank() }?.let { items += LessonItem.Problem("$id-error", problemText(it)) }
                 }
-                "custom" -> custom(id, m)?.let { items += it }
+                "custom" -> when (m.optString("customType")) {
+                    "practice-thinking" -> m.optJSONObject("details")?.optString("text")?.takeIf { it.isNotBlank() }?.let { items += LessonItem.Attempt(id, it) }
+                    "practice-next" -> items += LessonItem.Divider(id, "Next problem")
+                    // The learner set the open problem aside.
+                    "problem-dismissed" -> open?.let { at ->
+                        items[at] = (items[at] as LessonItem.Exercise).copy(conclusion = Conclusion("dismissed", "Set aside."))
+                        open = null
+                    }
+                    else -> custom(id, m)?.let { items += it }
+                }
             }
         }
         return items

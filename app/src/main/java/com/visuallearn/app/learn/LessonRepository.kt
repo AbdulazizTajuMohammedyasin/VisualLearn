@@ -90,6 +90,15 @@ class LessonRepository(private val api: LearnApi, private val figures: FiguresRe
         return id
     }
 
+    /** Starts practising [ideas] (a topic of what the learner knows); returns the session's id. */
+    suspend fun practise(topic: String, ideas: List<KnowledgeIdea>): String {
+        val id = api.createLesson("Practice: $topic".take(72), practice = true, ideas = ideas)
+        open(id)
+        send(LessonInput.text("Give me practice problems on $topic."))
+        refreshLessons()
+        return id
+    }
+
     fun say(text: String) {
         if (text.isNotBlank()) send(LessonInput.text(text.trim()))
     }
@@ -97,6 +106,13 @@ class LessonRepository(private val api: LearnApi, private val figures: FiguresRe
     fun answer(question: LessonItem.Question, choice: AnswerChoice) = send(LessonInput.answer(question, choice))
 
     fun retry() = send(LessonInput.retry())
+
+    /** The learner's working or answer on the open practice problem. */
+    fun work(exercise: LessonItem.Exercise, text: String) {
+        if (text.isNotBlank()) send(LessonInput.thinking(exercise.callId, text.trim()))
+    }
+
+    fun nextProblem() = send(LessonInput.next())
 
     fun delete(id: String) = scope.launch {
         runCatching { api.deleteLesson(id) }.onSuccess {

@@ -57,4 +57,8 @@ object LessonInput {
     fun answer(q: LessonItem.Question, choice: AnswerChoice): JSONObject =
         JSONObject().put("type", "answer").put("toolCallId", q.callId).put("answer", buildAnswer(q, choice))
     fun retry(): JSONObject = JSONObject().put("type", "retry")
+    /** The learner's working or answer on the open practice problem. */
+    fun thinking(problemCallId: String, text: String): JSONObject = JSONObject().put("type", "thinking").put("problemCallId", problemCallId).put("text", text)
+    /** Go on to the next practice problem. */
+    fun next(): JSONObject = JSONObject().put("type", "next")
 }

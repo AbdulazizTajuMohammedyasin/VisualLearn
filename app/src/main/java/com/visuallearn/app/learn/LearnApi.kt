@@ -11,8 +11,8 @@ import org.json.JSONObject
 interface LearnApi {
     suspend fun lessons(): List<LessonSummary>
 
-    /** Starts a lesson (or a practice session) and returns its id. */
-    suspend fun createLesson(title: String, practice: Boolean = false): String
+    /** Starts a lesson, or a practice session on [ideas] the learner knows, and returns its id. */
+    suspend fun createLesson(title: String, practice: Boolean = false, ideas: List<KnowledgeIdea> = emptyList()): String
     suspend fun lessonRecord(id: String): JSONObject
 
     /** A message, an answer or a retry (see [LessonInput]); the teacher's turn then runs on the server. */
