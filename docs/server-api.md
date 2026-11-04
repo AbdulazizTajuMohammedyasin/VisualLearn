@@ -269,7 +269,9 @@ The admin decides which model serves each kind of work, either a local model on 
 
 ### Lessons
 
-`/v1/learn/api/...` forwards a signed-in learner's request to their own LearnHarness process (see `server/README.md`). The paths, bodies and event streams are LearnHarness's own: for example `POST /v1/learn/api/chats` creates a session, `POST /v1/learn/api/chat` with `{ chatId, input }` sends a message or an answer, and `GET /v1/learn/api/chats/{id}/stream` streams the turn. Administrator routes (keys, providers, subscriptions, prompts, settings changes) answer `403`. `503 lessons_busy` means every lesson slot is in use; retry after `Retry-After`. `GET /admin/capacity` reports `lessons: { running, starting, active, maxInstances }`.
+`/v1/learn/api/...` forwards a signed-in learner's request to their own LearnHarness process (see `server/README.md`). The paths, bodies and event streams are LearnHarness's own: for example `POST /v1/learn/api/chats` creates a session, `POST /v1/learn/api/chat` with `{ chatId, input }` sends a message or an answer, and `GET /v1/learn/api/chats/{id}/stream` streams the turn. Administrator routes (keys, providers, subscriptions, prompts, settings changes) answer `403`.
+
+`POST /v1/learn/files?name=notes.pdf` with the PDF as the body (`Content-Type: application/pdf`, up to 25 MB) stores it in the learner's own files folder and answers `201 { name, path, bytes }`. Mention `path` (for example `~/notes.pdf`) in the next lesson message and the teacher's PDF reader can read it. That folder is the only place LearnHarness's file tools may read. To feed a PDF straight into the knowledge graph instead, use LearnHarness's notes import, `POST /v1/learn/api/graph/import` (multipart). `503 lessons_busy` means every lesson slot is in use; retry after `Retry-After`. `GET /admin/capacity` reports `lessons: { running, starting, active, maxInstances }`.
 
 ### Content and accounts
 

@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { Deps } from "./app.ts";
 import { ApiError, badRequest, forbidden, notFound } from "./errors.ts";
+import { MAX_PDF_BYTES } from "./documents.ts";
 import type { Figures } from "./figures.ts";
 import type { ModelRegistry, Provider } from "./models.ts";
 import type { RateLimiter } from "./ratelimit.ts";
@@ -427,6 +428,21 @@ export function learnRoutes(app: FastifyInstance, deps: Deps, pool: LearnPool, w
     scope.removeAllContentTypeParsers();
     scope.addContentTypeParser("*", { parseAs: "buffer", bodyLimit: 27 * 1024 * 1024 }, (_request, body, done) => done(null, body));
 
+    // A PDF from the phone goes into the learner's files folder, the only place
+    // LearnHarness's file tools and PDF reader may read; the reply says how to refer to it.
+    scope.post("/learn/files", async (request, reply) => {
+      const pdf = request.body;
+      if (!Buffer.isBuffer(pdf) || pdf.length === 0) throw badRequest("Send the PDF as the request body.");
+      if (pdf.length > MAX_PDF_BYTES) throw badRequest("That PDF is too big. The limit is 25 MB.");
+      if (pdf.subarray(0, 5).toString("latin1") !== "%PDF-") throw badRequest("That file isn't a PDF.");
+      work.hit(request.user.id);
+      const name = learnFileName((request.query as { name?: string }).name ?? "");
+      const files = pool.dirs(request.user.id).files;
+      mkdirSync(files, { recursive: true });
+      writeFileSync(join(files, name), pdf);
+      return reply.code(201).send({ name, path: `~/${name}`, bytes: pdf.length });
+    });
+
     scope.all("/learn/*", async (request, reply) => {
       const url = new URL(request.url, "http://local");
       const path = url.pathname.replace(/^\/v1\/learn/, "");
@@ -526,4 +542,15 @@ export function internalFigureRoutes(app: FastifyInstance, deps: Deps, figures: 
       return figures.toJson(own(request));
     });
   });
+}
+
+/** A safe file name for the learner's folder: no folders, no hidden files, always `.pdf`. */
+export function learnFileName(raw: string): string {
+  const base = raw.split(/[\\/]/).pop() ?? "";
+  const clean = base
+    .replace(/\.pdf$/i, "")
+    .replace(/[^\p{L}\p{N} ._()-]+/gu, "-")
+    .replace(/^[.\s-]+|[.\s-]+$/g, "")
+    .slice(0, 120);
+  return `${clean || "document"}.pdf`;
 }

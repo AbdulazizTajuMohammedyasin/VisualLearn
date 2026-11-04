@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { after, test } from "node:test";
-import { learnAllowed, learnEnv, learnerToken, type LearnInstance, type LearnLaunch, type LearnLauncher } from "../src/learn.ts";
+import { learnAllowed, learnEnv, learnerToken, learnFileName, type LearnInstance, type LearnLaunch, type LearnLauncher } from "../src/learn.ts";
 import { signIn, testServer, type TestServer } from "./helpers.ts";
 
 interface Seen {
@@ -309,4 +310,25 @@ test("a learner's lessons can ask for 3D figures, only for that learner and only
   const cancelled = await internal("POST", `/figures/${id}/cancel`, env.VL_FIGURE_TOKEN);
   assert.ok(["cancelled", "succeeded"].includes(cancelled.json().status));
 
+});
+
+test("a PDF from the phone lands in that learner's files folder, under a safe name", async () => {
+  const { server } = await setup();
+  const a = await signIn(server, "a@example.com");
+  const b = await signIn(server, "b@example.com");
+  const pdf = readFileSync(join(import.meta.dirname, "fixtures", "four-stroke-engine.pdf"));
+  const upload = (headers: Record<string, string>, name: string, body: Buffer) =>
+    server.app.inject({ method: "POST", url: `/v1/learn/files?name=${encodeURIComponent(name)}`, headers: { ...headers, "content-type": "application/pdf" }, payload: body });
+
+  const res = await upload(a.headers, "../../etc/Engine notes.pdf", pdf);
+  assert.equal(res.statusCode, 201);
+  assert.deepEqual(res.json(), { name: "Engine notes.pdf", path: "~/Engine notes.pdf", bytes: pdf.length });
+  const files = server.deps.learn!.dirs(a.user.id).files;
+  assert.deepEqual(readFileSync(join(files, "Engine notes.pdf")), pdf);
+  assert.ok(!existsSync(join(server.deps.learn!.dirs(b.user.id).files, "Engine notes.pdf")));
+  assert.equal((await upload(a.headers, "x.pdf", Buffer.from("not a pdf"))).statusCode, 400);
+  assert.equal((await server.app.inject({ method: "POST", url: "/v1/learn/files?name=x.pdf", payload: pdf, headers: { "content-type": "application/pdf" } })).statusCode, 401);
+  assert.equal(learnFileName(".hidden"), "hidden.pdf");
+  assert.equal(learnFileName(""), "document.pdf");
+  assert.equal(learnFileName("C:\\Users\\x\\a:b*c?.PDF"), "a-b-c.pdf");
 });
