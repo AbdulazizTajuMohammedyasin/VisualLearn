@@ -22,6 +22,9 @@ interface LearnApi {
     /** Puts a PDF where the teacher can read it; returns the path to mention, e.g. `~/notes.pdf`. */
     suspend fun uploadLessonFile(name: String, pdf: ByteArray): String
 
+    /** What each piece of the teacher's background work is doing, by the tool call that started it. */
+    suspend fun lessonActivity(id: String): Map<String, String>
+
     /** The running turn's agent events; completes when the turn is over. */
     fun lessonEvents(id: String): Flow<JSONObject>
 }

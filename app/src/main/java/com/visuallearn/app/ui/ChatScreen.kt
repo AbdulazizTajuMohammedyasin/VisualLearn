@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
@@ -94,6 +95,7 @@ import com.visuallearn.app.api.Role
 import com.visuallearn.app.api.SendMode
 import com.visuallearn.app.chat.ChatRepository
 import com.visuallearn.app.chat.PdfAttachment
+import com.visuallearn.app.learn.LessonRepository
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.openui.OpenUiView
 import kotlinx.coroutines.launch
@@ -116,6 +118,10 @@ fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenExplore: () -> Unit,
     onOpenFigures: () -> Unit,
+    /** Lessons on LearnHarness; null when the server has none (the debug fake). */
+    lessons: LessonRepository? = null,
+    onOpenLessons: () -> Unit = {},
+    onOpenLesson: (String) -> Unit = {},
 ) {
     val state by chat.state.collectAsStateWithLifecycle()
     val summaries by chat.summaries.collectAsStateWithLifecycle()
@@ -128,6 +134,12 @@ fun ChatScreen(
         attachments = (attachments + uris.map { pdfAttachment(context, it) }).distinctBy { it.name }.take(3)
     }
     val attach = { pickPdfs.launch(arrayOf("application/pdf")) }
+    // With lessons, a PDF or a goal starts a lesson: probing, a plan, steps with checks.
+    var lessonSheet by remember { mutableStateOf(false) }
+    var lessonPdf by remember { mutableStateOf<PdfAttachment?>(null) }
+    val pickForLesson = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { lessonPdf = pdfAttachment(context, it); lessonSheet = true }
+    }
     val darkTheme = isSystemInDarkTheme()
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -141,6 +153,7 @@ fun ChatScreen(
                 DrawerItem("New chat", Icons.Filled.Add) { chat.newChat(); closeDrawer() }
                 DrawerItem("Explore figures", Icons.Filled.Search) { closeDrawer(); onOpenExplore() }
                 DrawerItem("My figures", Icons.Filled.Star) { closeDrawer(); onOpenFigures() }
+                if (lessons != null) DrawerItem("Lessons", Icons.AutoMirrored.Filled.List) { closeDrawer(); onOpenLessons() }
                 HorizontalDivider(Modifier.padding(vertical = 8.dp, horizontal = 24.dp))
                 Text("Chats", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 28.dp, bottom = 4.dp))
@@ -193,7 +206,8 @@ fun ChatScreen(
                             onOpenFigure = onOpenFigure,
                             onOpenFigures = onOpenFigures,
                             onSuggestion = { chat.send(it, SendMode.AUTO) },
-                            onAttach = attach,
+                            onAttach = if (lessons != null) ({ pickForLesson.launch(arrayOf("application/pdf")) }) else attach,
+                            onStartLesson = if (lessons != null) ({ lessonPdf = null; lessonSheet = true }) else null,
                         )
                         else -> MessageList(
                             messages = state.messages,
@@ -249,6 +263,15 @@ fun ChatScreen(
             }
         }
     }
+
+    if (lessonSheet && lessons != null) {
+        StartLessonSheet(
+            lessons,
+            initialPdf = lessonPdf,
+            onStarted = { id -> lessonSheet = false; lessonPdf = null; onOpenLesson(id) },
+            onDismiss = { lessonSheet = false; lessonPdf = null },
+        )
+    }
 }
 
 @Composable
@@ -272,6 +295,8 @@ private fun EmptyState(
     onOpenFigures: () -> Unit,
     onSuggestion: (String) -> Unit,
     onAttach: () -> Unit,
+    /** Starts a lesson on any topic; null when lessons aren't available. */
+    onStartLesson: (() -> Unit)?,
 ) {
     // Sits at the bottom, near the thumb and the composer; scrolls on short screens.
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -293,6 +318,12 @@ private fun EmptyState(
                     PageGlyph(size = 20.dp, color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(10.dp))
                     Text("Learn from a PDF")
+                }
+                if (onStartLesson != null) {
+                    Spacer(Modifier.width(10.dp))
+                    OutlinedButton(onClick = onStartLesson, enabled = enabled, contentPadding = PaddingValues(horizontal = 18.dp, vertical = 14.dp)) {
+                        Text("Start a lesson")
+                    }
                 }
             }
             Text(

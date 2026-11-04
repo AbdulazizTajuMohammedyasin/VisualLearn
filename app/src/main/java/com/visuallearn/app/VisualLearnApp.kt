@@ -8,6 +8,8 @@ import com.visuallearn.app.chat.ChatRepository
 import com.visuallearn.app.figures.FigureCheckWorker
 import com.visuallearn.app.figures.FiguresRepository
 import com.visuallearn.app.gallery.Gallery
+import com.visuallearn.app.learn.LearnApi
+import com.visuallearn.app.learn.LessonRepository
 import com.visuallearn.app.offline.Connectivity
 import com.visuallearn.app.offline.OfflineStore
 import com.visuallearn.app.offline.SyncManager
@@ -41,6 +43,10 @@ class VisualLearnApp : Application() {
     lateinit var sync: SyncManager
         private set
 
+    /** Lessons on LearnHarness; null without a real server (the debug fake has none). */
+    var lessons: LessonRepository? = null
+        private set
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     override fun onCreate() {
@@ -51,6 +57,7 @@ class VisualLearnApp : Application() {
         val store = OfflineStore(this)
         figures = FiguresRepository(this, api, store)
         chat = ChatRepository(api, figures, store)
+        lessons = (api as? LearnApi)?.let { LessonRepository(it, figures) }
         gallery = Gallery(this)
         connectivity = Connectivity(this)
         sync = SyncManager(api, store, chat, figures, scope)
@@ -71,6 +78,7 @@ class VisualLearnApp : Application() {
     private fun clearOnSignOut(store: OfflineStore) = scope.launch {
         tokens.signedIn.drop(1).filter { !it }.collect {
             chat.clear()
+            lessons?.close()
             figures.clear()
             store.clear()
         }

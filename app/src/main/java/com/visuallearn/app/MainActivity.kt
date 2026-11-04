@@ -23,6 +23,8 @@ import com.visuallearn.app.ui.ExploreScreen
 import com.visuallearn.app.ui.FigureScreen
 import com.visuallearn.app.ui.FiguresScreen
 import com.visuallearn.app.ui.GalleryFigureScreen
+import com.visuallearn.app.ui.LessonScreen
+import com.visuallearn.app.ui.LessonsScreen
 import com.visuallearn.app.ui.LicensesScreen
 import com.visuallearn.app.ui.SettingsScreen
 import com.visuallearn.app.ui.SignInScreen
@@ -77,6 +79,8 @@ private sealed interface Screen {
     data class GalleryFigure(val key: String) : Screen
     data object Storage : Screen
     data object Licenses : Screen
+    data object Lessons : Screen
+    data class Lesson(val id: String) : Screen
 }
 
 private fun Screen.encode(): String = when (this) {
@@ -88,11 +92,15 @@ private fun Screen.encode(): String = when (this) {
     is Screen.GalleryFigure -> "gallery:$key"
     Screen.Storage -> "storage"
     Screen.Licenses -> "licenses"
+    Screen.Lessons -> "lessons"
+    is Screen.Lesson -> "lesson:$id"
 }
 
 private fun decode(s: String): Screen = when {
     s.startsWith("figure:") -> Screen.Figure(s.removePrefix("figure:"))
     s.startsWith("gallery:") -> Screen.GalleryFigure(s.removePrefix("gallery:"))
+    s.startsWith("lesson:") -> Screen.Lesson(s.removePrefix("lesson:"))
+    s == "lessons" -> Screen.Lessons
     s == "figures" -> Screen.Figures
     s == "settings" -> Screen.Settings
     s == "explore" -> Screen.Explore
@@ -142,6 +150,9 @@ private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<S
             onOpenSettings = { push(Screen.Settings) },
             onOpenExplore = { push(Screen.Explore) },
             onOpenFigures = { push(Screen.Figures) },
+            lessons = app.lessons,
+            onOpenLessons = { push(Screen.Lessons) },
+            onOpenLesson = { push(Screen.Lesson(it)) },
         )
         is Screen.Figure -> FigureScreen(app.figures, screen.id, darkFigures, onBack = ::pop)
         Screen.Figures -> FiguresScreen(app.figures, onOpen = { push(Screen.Figure(it)) }, onBack = ::pop)
@@ -158,5 +169,9 @@ private fun AppNavigation(app: VisualLearnApp, pendingFigure: MutableStateFlow<S
             ?: ExploreScreen(app.gallery, onOpen = { push(Screen.GalleryFigure(it.key)) }, onBack = ::pop)
         Screen.Storage -> StorageScreen(app.figures, onBack = ::pop)
         Screen.Licenses -> LicensesScreen(onBack = ::pop)
+        Screen.Lessons -> app.lessons?.let { LessonsScreen(it, onOpen = { id -> push(Screen.Lesson(id)) }, onBack = ::pop) } ?: pop()
+        is Screen.Lesson -> app.lessons?.let {
+            LessonScreen(it, app.figures, screen.id, onOpenFigure = { id -> push(Screen.Figure(id)) }, onBack = ::pop)
+        } ?: pop()
     }
 }

@@ -179,6 +179,12 @@ class HttpApi(
         call("POST", "/learn/api/chat", JSONObject().put("chatId", id).put("input", input))
     }
 
+    override suspend fun lessonActivity(id: String): Map<String, String> =
+        call("GET", "/learn/api/jobs?chatId=" + java.net.URLEncoder.encode(id, "UTF-8")).optJSONArray("jobs")?.objects()
+            ?.filter { it.optString("status") == "running" }
+            ?.associate { it.optString("toolCallId") to it.optString("activity") }
+            .orEmpty()
+
     override suspend fun deleteLesson(id: String) {
         call("DELETE", "/learn/api/chats/$id")
     }
