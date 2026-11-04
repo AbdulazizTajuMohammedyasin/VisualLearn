@@ -10,6 +10,9 @@ import com.visuallearn.app.api.ApiJson.parseSync
 import com.visuallearn.app.api.ApiJson.parseTokens
 import com.visuallearn.app.api.ApiJson.parseUser
 import com.visuallearn.app.auth.TokenStore
+import com.visuallearn.app.learn.LearnApi
+import com.visuallearn.app.learn.LessonJson
+import com.visuallearn.app.learn.LessonSummary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -34,7 +37,7 @@ class HttpApi(
     private val tokens: TokenStore,
     private val appVersion: String,
     private val uiLibraryVersion: String,
-) : VisualLearnApi {
+) : VisualLearnApi, LearnApi {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -160,6 +163,51 @@ class HttpApi(
         }
     }
 
+    // --- lessons (LearnHarness through /v1/learn) ---
+
+    override suspend fun lessons(): List<LessonSummary> =
+        call("GET", "/learn/api/chats").getJSONArray("chats").objects().map(LessonJson::summary)
+
+    override suspend fun createLesson(title: String, practice: Boolean): String {
+        val body = JSONObject().put("title", title).apply { if (practice) put("kind", "practice") }
+        return call("POST", "/learn/api/chats", body).getString("id")
+    }
+
+    override suspend fun lessonRecord(id: String): JSONObject = call("GET", "/learn/api/chats/$id")
+
+    override suspend fun sendToLesson(id: String, input: JSONObject) {
+        call("POST", "/learn/api/chat", JSONObject().put("chatId", id).put("input", input))
+    }
+
+    override suspend fun deleteLesson(id: String) {
+        call("DELETE", "/learn/api/chats/$id")
+    }
+
+    override suspend fun uploadLessonFile(name: String, pdf: ByteArray): String {
+        val path = "/learn/files?name=" + java.net.URLEncoder.encode(name, "UTF-8")
+        return call("POST", path, raw = pdf.toRequestBody(PDF)).getString("path")
+    }
+
+    /** LearnHarness's turn stream: plain `data:` lines of agent events, ending with `[DONE]`. */
+    override fun lessonEvents(id: String): Flow<JSONObject> = flow {
+        repeat(2) { attempt ->
+            val builder = Request.Builder().url(baseUrl.trimEnd('/') + "/learn/api/chats/$id/stream").header("Accept", "text/event-stream")
+            tokens.current()?.let { builder.header("Authorization", "Bearer ${it.accessToken}") }
+            streamClient.newCall(builder.build()).execute().use { response ->
+                if (response.code == 401 && attempt == 0 && refresh()) return@use
+                if (!response.isSuccessful) parse(response)
+                val source = response.body!!.source()
+                while (true) {
+                    val line = source.readUtf8Line() ?: return@flow
+                    if (!line.startsWith("data:")) continue
+                    val data = line.substringAfter(':').trim()
+                    if (data == "[DONE]") return@flow
+                    runCatching { JSONObject(data) }.getOrNull()?.let { emit(it) }
+                }
+            }
+        }
+    }.flowOn(Dispatchers.IO)
+
     // --- transport ---
 
     private suspend fun call(
@@ -194,7 +242,13 @@ class HttpApi(
     private fun parse(response: Response): JSONObject {
         val text = response.body?.string().orEmpty()
         if (response.isSuccessful) return if (text.isBlank()) JSONObject() else JSONObject(text)
-        val error = runCatching { parseError(JSONObject(text).getJSONObject("error")) }.getOrElse {
+        val error = runCatching {
+            // Lessons (LearnHarness) answer `{ "error": "message" }`; this server answers an error object.
+            when (val e = JSONObject(text).get("error")) {
+                is String -> ApiError("http_${response.code}", e, response.code >= 500 || response.code == 409)
+                else -> parseError(e as JSONObject)
+            }
+        }.getOrElse {
             ApiError("http_${response.code}", "The server returned an error (${response.code}).", response.code >= 500)
         }
         throw ApiException(error, response.code)
